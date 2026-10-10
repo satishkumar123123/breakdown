@@ -27,3 +27,12 @@ If saving fails, the form stays filled and shows the API error. Database connect
 ## Verification
 
 From the repository root: `npm ci`, `npm test`, and `npm run build`. Tests use isolated model stubs for API behavior; testing your deployed Atlas connection requires `/api/health` and a test report on your deployment.
+
+## Reporting improvements
+
+- Summary cards show breakdown count, total downtime, and D/N downtime. The form shows the current draft; History shows saved reports for the selected date and active filters.
+- History has machine-name search, section selection and D/N filters. Counts, totals, machine charts, visible rows and Excel exports use the matching entries. **Edit Full Report** always loads the entire saved report.
+- Machine analysis can rank machines by downtime or breakdown count. Names are grouped without regard to case or surrounding spaces.
+- New-report and edit drafts auto-save separately in this browser/device. Refresh restores the draft. These drafts are not database submissions and do not sync across devices or different deployment domains. Storage failures are displayed in the form.
+- History → date → **Edit Full Report** → **Update Report** updates the same record using `PUT /api/reports/:id`. Cancel Edit restores the new-report draft. An outdated edit returns HTTP 409 instead of overwriting a newer update; a deleted report returns 404. Failed saves retain the form and draft.
+- Section is optional, including on older reports. Totals are recalculated by the backend from the submitted entries. Redeploy the Express backend along with the frontend to enable the update endpoint.

@@ -92,5 +92,36 @@ test('submit waits for DB, persists fields, and date-filtered history returns re
   const otherDate = await fetch(`${url}/api/reports?date=2026-10-09`);
   assert.deepEqual(await otherDate.json(), []);
   assert.equal((await post({ reportDate: '2026-10-10', shift: 'Shift A', entries: [] })).status, 400);
+  assert.equal((await post({ ...payload, reportDate: '2026-02-30' })).status, 400);
+  const initialTimestamp = '2026-10-10T12:00:00.000Z';
+  reports[0].updatedAt = initialTimestamp;
+  t.mock.method(Model, 'findOneAndUpdate', async (filter, update) => {
+    const index = reports.findIndex(report => String(report._id) === filter._id &&
+      (!filter.updatedAt || new Date(report.updatedAt).getTime() === filter.updatedAt.getTime()));
+    if (index < 0) return null;
+    reports[index] = { ...reports[index], ...update.$set, updatedAt: '2026-10-10T13:00:00.000Z' };
+    return reports[index];
+  });
+  t.mock.method(Model, 'exists', async filter => reports.some(report => String(report._id) === filter._id));
+  const edit = (id, body) => fetch(`${url}/api/reports/${id}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+  });
+  const editedPayload = { ...payload, reportDate: '2026-10-11', totalDownTime: 999, totalManPower: 999,
+    entries: [{ ...payload.entries[0], section: 'Mill', downTimeHours: 1.5, manpowerUsed: 2 }], expectedUpdatedAt: initialTimestamp };
+  const editResponse = await edit(saved._id, editedPayload);
+  assert.equal(editResponse.status, 200);
+  const edited = await editResponse.json();
+  assert.equal(edited._id, saved._id);
+  assert.equal(edited.totalDownTime, 1.5);
+  assert.equal(edited.totalManPower, 2);
+  assert.equal(edited.entries[0].section, 'Mill');
+  assert.equal(reports.length, 1);
+  assert.deepEqual(await (await fetch(`${url}/api/reports?date=2026-10-10`)).json(), []);
+  assert.equal((await (await fetch(`${url}/api/reports?date=2026-10-11`)).json())[0]._id, saved._id);
+  assert.equal((await edit(saved._id, editedPayload)).status, 409);
+  assert.equal((await edit(saved._id, { ...editedPayload, entries: [{ machineName: '' }] })).status, 400);
+  assert.equal((await edit(saved._id, { ...editedPayload, expectedUpdatedAt: 'bad timestamp' })).status, 400);
+  assert.equal((await edit('bad-id', editedPayload)).status, 400);
+  assert.equal((await edit('000000000000000000000000', editedPayload)).status, 404);
   assert.equal((await fetch(`${url}/api/health`)).status, 200);
 });

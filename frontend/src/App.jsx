@@ -10,41 +10,54 @@ import {
   RefreshCw,
   CalendarDays,
   ChevronRight,
-  ArrowLeft
+  ArrowLeft,
+  Pencil
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { requestApi } from './api.js';
+import { SummaryCards, MachineAnalysis } from './ReportInsights.jsx';
+import { DRAFT_KEY, EDIT_DRAFT_KEY, today, emptyRow, downtime, normaliseRows, readDraft, writeDraft, filterReports } from './reportTools.js';
+
+const loadInitialForm = () => {
+  try {
+    const draft = readDraft(window.localStorage, EDIT_DRAFT_KEY) || readDraft(window.localStorage, DRAFT_KEY);
+    if (draft) return { ...draft, restored: true };
+  } catch { return { reportDate: today(), rows: [emptyRow()], storageError: true }; }
+  return { reportDate: today(), rows: [emptyRow()] };
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('entry'); // 'entry' ya 'history'
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
+  const [initialForm] = useState(loadInitialForm);
+  const [reportDate, setReportDate] = useState(initialForm.reportDate);
+  const [rows, setRows] = useState(initialForm.rows);
+  const [editingReport, setEditingReport] = useState(initialForm.editingReport || null);
+  const [draftStatus, setDraftStatus] = useState(initialForm.restored ? 'Draft restored — aap wahi se continue kar sakte hain.' : '');
+  const [storageError, setStorageError] = useState(initialForm.storageError || false);
+  const [notice, setNotice] = useState('');
 
-  const [rows, setRows] = useState([
-    {
-      id: 1,
-
-      machineName: '',
-      shift: 'D',
-      breakdownDetails: '',
-      rootCause: '',
-      correctiveAction: '',
-      startTime: '',
-      endTime: '',
-      downTimeHours: 0,
-      manpowerUsed: 0,
-      sparesUsed: ''
-    }
-  ]);
+  useEffect(() => {
+    try {
+      writeDraft(window.localStorage, editingReport ? EDIT_DRAFT_KEY : DRAFT_KEY, { reportDate, rows, editingReport });
+      setStorageError(false);
+      setDraftStatus(initialForm.restored ? 'Draft restored • changes auto-saved on this device' : 'Draft auto-saved on this device');
+    } catch { setStorageError(true); }
+  }, [reportDate, rows, editingReport, initialForm.restored]);
 
   const [historyRecords, setHistoryRecords] = useState([]);
   const [filterDate, setFilterDate] = useState('');
+  const [filterMachine, setFilterMachine] = useState('');
+  const [filterSection, setFilterSection] = useState('');
+  const sectionOptions = [...new Set(historyRecords.flatMap(report => (report.entries || []).map(entry => String(entry.section || '').trim())).filter(Boolean))].sort();
+  const [filterShift, setFilterShift] = useState('');
+  const filteredRecords = useMemo(() => filterReports(historyRecords, { date: filterDate, machine: filterMachine, section: filterSection, shift: filterShift }), [historyRecords, filterDate, filterMachine, filterSection, filterShift]);
   const [openHistoryDate, setOpenHistoryDate] = useState(null);
   const dateGroups = useMemo(() => {
     const grouped = new Map();
-    historyRecords.forEach(report => {
+    filteredRecords.forEach(report => {
       const date = report.reportDate;
       if (!grouped.has(date)) grouped.set(date, []);
       grouped.get(date).push(report);
@@ -54,16 +67,19 @@ export default function App() {
       downtime: reports.reduce((sum, report) => sum + (Number(report.totalDownTime) || 0), 0),
       entries: reports.reduce((sum, report) => sum + (report.entries?.length || 0), 0)
     }));
-  }, [historyRecords]);
+  }, [filteredRecords]);
   const selectedDateGroup = dateGroups.find(group => group.date === openHistoryDate);
+  const insightReports = selectedDateGroup?.reports || filteredRecords;
+  const insightEntries = insightReports.flatMap(report => (report.entries || []).map(entry => ({ ...entry, shift: entry.shift || report.shift })));
+  const insightLabel = `${selectedDateGroup?.date || filterDate || 'All dates'} • saved reports${filterMachine || filterSection || filterShift ? ' • filtered results' : ''}`;
 
 
   // Breakdown Reports Fetch Logic
-  const fetchHistory = async (date = '') => {
+  const fetchHistory = async () => {
     try {
       setLoading(true);
       setError('');
-      const data = await requestApi(date ? `/reports?date=${encodeURIComponent(date)}` : '/reports');
+      const data = await requestApi('/reports');
       setHistoryRecords(data);
     } catch (err) {
       setError(err.message);
@@ -74,48 +90,48 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === 'history') {
-      fetchHistory(filterDate);
+      fetchHistory();
     }
-  }, [activeTab, filterDate]);
-
-  const calculateDownTime = (start, end) => {
-    if (!start || !end) return 0;
-    const [startH, startM] = start.split(':').map(Number);
-    const [endH, endM] = end.split(':').map(Number);
-    let diffMinutes = endH * 60 + endM - (startH * 60 + startM);
-    if (diffMinutes < 0) diffMinutes += 24 * 60;
-    return Number((diffMinutes / 60).toFixed(2));
-  };
+  }, [activeTab]);
 
   const handleRowChange = (index, field, value) => {
-    const updatedRows = [...rows];
-    updatedRows[index][field] = value;
-    if (field === 'startTime' || field === 'endTime') {
-      const start = field === 'startTime' ? value : updatedRows[index].startTime;
-      const end = field === 'endTime' ? value : updatedRows[index].endTime;
-      updatedRows[index].downTimeHours = calculateDownTime(start, end);
-    }
-    setRows(updatedRows);
+    setRows(current => current.map((row, rowIndex) => {
+      if (rowIndex !== index) return row;
+      const updated = { ...row, [field]: value };
+      if (field === 'startTime' || field === 'endTime') updated.downTimeHours = downtime(updated.startTime, updated.endTime);
+      return updated;
+    }));
   };
 
-  const addRow = () => {
-    setRows([
-      ...rows,
-      {
-        id: Date.now(),
+  const addRow = () => setRows(current => [...current, emptyRow()]);
 
-        machineName: '',
-        shift: 'D',
-        breakdownDetails: '',
-        rootCause: '',
-        correctiveAction: '',
-        startTime: '',
-        endTime: '',
-        downTimeHours: 0,
-        manpowerUsed: 0,
-        sparesUsed: ''
-      }
-    ]);
+  const restoreNewDraft = () => {
+    let draft;
+    try { draft = readDraft(window.localStorage, DRAFT_KEY); } catch { setStorageError(true); }
+    setEditingReport(null);
+    setReportDate(draft?.reportDate || today());
+    setRows(draft?.rows || [emptyRow()]);
+    setError('');
+  };
+
+  const cancelEdit = () => {
+    if (!window.confirm('Editing changes discard karke new report draft par wapas jayein?')) return;
+    try { window.localStorage.removeItem(EDIT_DRAFT_KEY); } catch { setStorageError(true); }
+    restoreNewDraft();
+  };
+
+  const handleEditReport = (reportId) => {
+    const report = historyRecords.find(item => item._id === reportId);
+    if (!report) return;
+    if (editingReport?._id === reportId) { setActiveTab('entry'); return; }
+    if (editingReport && editingReport._id !== reportId && !window.confirm('Current edit draft replace karna hai?')) return;
+    setEditingReport({ _id: report._id, updatedAt: report.updatedAt });
+    setReportDate(report.reportDate);
+    setRows(normaliseRows(report.entries || [], report.shift));
+    setError('');
+    setNotice('Existing report edit ho rahi hai. Update Report se changes save karein.');
+    setActiveTab('entry');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const removeRow = (index) => {
@@ -129,6 +145,10 @@ export default function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (saving) return;
+    if (!rows.length || rows.some(row => !row.machineName.trim())) {
+      setError('Har breakdown row me machine name zaroori hai.');
+      return;
+    }
     setSaving(true);
     setError('');
     const payload = {
@@ -136,34 +156,25 @@ export default function App() {
       shift: [...new Set(rows.map(row => row.shift))].join(' / '),
       entries: rows,
       totalDownTime: Number(totalDownTime),
-      totalManPower: Number(totalManPower)
+      totalManPower: Number(totalManPower),
+      expectedUpdatedAt: editingReport?.updatedAt
     };
 
     try {
-      const data = await requestApi('/reports', {
-        method: 'POST',
+      const data = await requestApi(editingReport ? `/reports/${editingReport._id}` : '/reports', {
+        method: editingReport ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       if (!data?._id) throw new Error('Server ne saved report confirm nahi ki. History check karein.');
-      alert('Report database me successfully save ho gaya!');
-      // Form reset to fresh state
-      setRows([
-        {
-          id: Date.now(),
-
-          machineName: '',
-          shift: 'D',
-          breakdownDetails: '',
-          rootCause: '',
-          correctiveAction: '',
-          startTime: '',
-          endTime: '',
-          downTimeHours: 0,
-          manpowerUsed: 0,
-          sparesUsed: ''
-        }
-      ]);
+      setNotice(editingReport ? 'Report successfully updated!' : 'Report database me successfully save ho gaya!');
+      try { window.localStorage.removeItem(editingReport ? EDIT_DRAFT_KEY : DRAFT_KEY); } catch { setStorageError(true); }
+      if (editingReport) restoreNewDraft();
+      else setRows([emptyRow()]);
+      setHistoryRecords(current => [data, ...current.filter(report => report._id !== data._id)]);
+      setFilterMachine('');
+      setFilterSection('');
+      setFilterShift('');
       setFilterDate('');
       setOpenHistoryDate(reportDate);
       setActiveTab('history');
@@ -179,7 +190,11 @@ export default function App() {
     try {
       await requestApi(`/reports/${reportId}`, { method: 'DELETE' });
       setHistoryRecords(historyRecords.filter((r) => r._id !== reportId));
-      alert('Report record deleted!');
+      if (editingReport?._id === reportId) {
+        try { window.localStorage.removeItem(EDIT_DRAFT_KEY); } catch { setStorageError(true); }
+        restoreNewDraft();
+      }
+      setNotice('Report record deleted!');
     } catch (err) {
       alert('Delete error: ' + err.message);
     }
@@ -190,6 +205,7 @@ export default function App() {
       'SL. NO.': idx + 1,
       'DATE': dateStr,
       'MACHINE NAME': row.machineName,
+      'SECTION': row.section || '',
       'SHIFT': row.shift || shiftStr || '-',
       'BREAK DOWN DETAILS': row.breakdownDetails,
       'ROOT CAUSE': row.rootCause,
@@ -222,15 +238,17 @@ export default function App() {
           <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
             <button
               type="button"
-              onClick={() => setActiveTab('entry')}
+              disabled={saving}
+              onClick={() => { setError(''); setActiveTab('entry'); }}
               className={`px-3 py-1.5 rounded-md font-medium text-xs transition ${
                 activeTab === 'entry' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
               }`}
             >
-              New Report
+              {editingReport ? 'Edit Report' : 'New Report'}
             </button>
             <button
               type="button"
+              disabled={saving}
               onClick={() => { setOpenHistoryDate(null); setActiveTab('history'); }}
               className={`px-3 py-1.5 rounded-md font-medium text-xs transition ${
                 activeTab === 'history' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
@@ -243,6 +261,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 mt-8 print:m-0 print:p-0 print:max-w-full">
+        {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex justify-between gap-3 print:hidden">{notice}<button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
         {error && (
           <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {error}
@@ -254,6 +273,8 @@ export default function App() {
               <div className="w-44 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 shadow-sm">
                 <label className="block text-[10px] font-bold uppercase tracking-wider text-sky-700 mb-1">Report Date</label>
                 <input
+                  aria-label="Report date"
+                  disabled={saving}
                   type="date"
                   required
                   value={reportDate}
@@ -280,12 +301,20 @@ export default function App() {
               </div>
             </div>
 
+            <div className="flex flex-wrap justify-between items-center gap-3 mb-4 print:hidden">
+              <p role="status" className={`text-xs font-semibold ${storageError ? 'text-rose-700' : 'text-emerald-700'}`}>{storageError ? 'Auto-save unavailable. Is tab ko close karne se pehle report save/export karein.' : draftStatus}</p>
+              {editingReport && <button type="button" onClick={cancelEdit} disabled={saving} className="text-xs font-bold text-rose-700 bg-rose-50 px-3 py-2 rounded-lg">Cancel Edit</button>}
+            </div>
+            {editingReport && <p className="mb-4 text-sm font-semibold text-violet-800">Editing saved report • {reportDate}</p>}
+            <SummaryCards entries={rows.filter(row => row.machineName.trim())} label={`Current ${editingReport ? 'edit' : 'draft'} • ${reportDate} • unsaved changes`} />
+            <fieldset disabled={saving} className="min-w-0">
             <div className="overflow-x-auto border border-slate-200 rounded-lg mb-6">
-              <table className="color-table entry-table w-full text-left text-xs border-collapse min-w-[1150px] print:min-w-full">
+              <table className="color-table entry-table w-full text-left text-xs border-collapse min-w-[1250px] print:min-w-full">
                 <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase">
                   <tr>
                     <th className="p-2 border-r text-center w-12">SL. NO.</th>
                     <th className="p-2 border-r w-36">Machine Name</th>
+                    <th className="p-2 border-r w-28">Section</th>
                     <th className="p-2 border-r w-24">Shift</th>
                     <th className="p-2 border-r w-48">Break Down Details</th>
                     <th className="p-2 border-r w-44">Root Cause</th>
@@ -306,12 +335,14 @@ export default function App() {
                         <input
                           type="text"
                           required
+                          aria-label={`Machine name row ${idx + 1}`}
                           placeholder="Machine..."
                           value={row.machineName}
                           onChange={(e) => handleRowChange(idx, 'machineName', e.target.value)}
                           className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 outline-none"
                         />
                       </td>
+                      <td className="p-2 border-r"><input type="text" aria-label={`Section row ${idx + 1}`} placeholder="Section..." value={row.section || ''} onChange={e => handleRowChange(idx, 'section', e.target.value)} className="w-full border rounded px-2 py-1 text-xs outline-none" /></td>
                       <td className="p-2 border-r text-center">
                         <button
                           type="button"
@@ -403,7 +434,7 @@ export default function App() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-slate-100 font-bold text-slate-800 border-t-2 border-slate-300">
-                    <td colSpan={8} className="p-3 text-right pr-4 text-sm">Total</td>
+                    <td colSpan={9} className="p-3 text-right pr-4 text-sm">Total</td>
                     <td className="p-3 text-center border-x text-sm text-blue-700 bg-blue-50">{totalDownTime}</td>
                     <td className="p-3 text-center border-r text-sm text-blue-700 bg-blue-50">{totalManPower}</td>
                     <td colSpan={2}></td>
@@ -426,9 +457,10 @@ export default function App() {
                 disabled={saving}
                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition shadow-md disabled:opacity-50 cursor-pointer"
               >
-                <CheckCircle2 size={18} /> {saving ? 'Saving...' : 'Submit Daily Report'}
+                <CheckCircle2 size={18} /> {saving ? 'Saving...' : editingReport ? 'Update Report' : 'Submit Daily Report'}
               </button>
             </div>
+            </fieldset>
           </form>
         )}
 
@@ -437,7 +469,7 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between gap-4 mb-6 print:hidden">
               <div>
                 <h2 className="text-xl font-bold text-violet-900 flex items-center gap-2"><CalendarDays size={22} /> Breakdown History</h2>
-                <p className="text-sm text-fuchsia-700 mt-1">Choose a date to open its breakdown reports</p>
+                <p className="text-sm text-fuchsia-700 mt-1">Search machines, filter shifts, or choose a date to open reports</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <input
@@ -447,23 +479,30 @@ export default function App() {
                   onChange={(e) => { setFilterDate(e.target.value); setOpenHistoryDate(e.target.value || null); }}
                   className="w-40 border border-violet-200 bg-white rounded-lg px-2 py-2 text-xs text-violet-800 font-semibold outline-none focus:ring-2 focus:ring-violet-400"
                 />
-                {filterDate && (
-                  <button type="button" onClick={() => { setFilterDate(''); setOpenHistoryDate(null); }} className="text-xs font-semibold text-fuchsia-700 bg-fuchsia-100 px-3 py-2 rounded-lg">
+                <input type="search" aria-label="Search history by machine name" placeholder="Search machine..." value={filterMachine} onChange={e => setFilterMachine(e.target.value)} className="w-44 border border-sky-200 bg-white rounded-lg px-3 py-2 text-xs text-sky-900" />
+                <select aria-label="Filter history by section" value={filterSection} onChange={e => setFilterSection(e.target.value)} className="border border-emerald-200 bg-white rounded-lg px-3 py-2 text-xs text-emerald-900"><option value="">All sections</option>{sectionOptions.map(section => <option key={section} value={section}>{section}</option>)}</select>
+                <select aria-label="Filter history by shift" value={filterShift} onChange={e => setFilterShift(e.target.value)} className="border border-amber-200 bg-white rounded-lg px-3 py-2 text-xs text-amber-900"><option value="">All shifts</option><option value="D">D shift</option><option value="N">N shift</option></select>
+                {(filterDate || filterMachine || filterSection || filterShift) && (
+                  <button type="button" onClick={() => { setFilterDate(''); setFilterMachine(''); setFilterSection(''); setFilterShift(''); setOpenHistoryDate(null); }} className="text-xs font-semibold text-fuchsia-700 bg-fuchsia-100 px-3 py-2 rounded-lg">
                     Clear Filter
                   </button>
                 )}
-                <button type="button" onClick={() => fetchHistory(filterDate)} aria-label="Refresh history" className="p-2 border border-violet-200 bg-white rounded-lg hover:bg-violet-100 text-violet-700">
+                <button type="button" onClick={() => fetchHistory()} aria-label="Refresh history" className="p-2 border border-violet-200 bg-white rounded-lg hover:bg-violet-100 text-violet-700">
                   <RefreshCw size={16} />
                 </button>
               </div>
             </div>
 
+            {!loading && <>
+              <SummaryCards entries={insightEntries} label={insightLabel} />
+              <MachineAnalysis entries={insightEntries} label={insightLabel} />
+            </>}
             {loading ? (
               <div className="py-12 text-center text-violet-600 font-medium">Loading reports...</div>
             ) : dateGroups.length === 0 ? (
               <div className="py-12 text-center text-fuchsia-600">
                 <History size={48} className="mx-auto mb-3 opacity-50" />
-                <p>Koi breakdown report record nahi mila.</p>
+                <p>Koi matching report nahi mila. Filters clear karke dekhein.</p>
               </div>
             ) : (
               <>
@@ -502,11 +541,12 @@ export default function App() {
                         <article key={report._id || rIdx} className="rounded-xl overflow-hidden border border-sky-200 shadow-sm bg-white page-break-inside-avoid">
                           <div className="report-card-header px-4 py-3 flex flex-wrap justify-between items-center gap-3">
                             <div className="flex flex-wrap gap-3 items-center">
-                              <span className="text-sm font-bold text-sky-900">Report {rIdx + 1}</span>
-                              <span className="text-xs font-semibold text-rose-800 bg-rose-100 px-2 py-1 rounded-lg">Downtime: {report.totalDownTime} hrs</span>
+                              <span className="text-sm font-bold text-sky-900">Report {rIdx + 1}{(filterMachine || filterSection || filterShift) ? ' • matching rows' : ''}</span>
+                              <span className="text-xs font-semibold text-rose-800 bg-rose-100 px-2 py-1 rounded-lg">Downtime: {Number(report.totalDownTime).toFixed(2)} hrs</span>
                               <span className="text-xs font-semibold text-amber-900 bg-amber-100 px-2 py-1 rounded-lg">Manpower: {report.totalManPower}</span>
                             </div>
                             <div className="flex items-center gap-2 print:hidden">
+                              <button type="button" onClick={() => handleEditReport(report._id)} className="flex items-center gap-1.5 text-xs bg-violet-600 hover:bg-violet-700 text-white font-semibold px-3 py-2 rounded-lg"><Pencil size={14} /> Edit Full Report</button>
                               <button type="button" onClick={() => exportToExcel(report.entries, report.reportDate, report.shift)} className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg">
                                 <Download size={14} /> Download Excel
                               </button>
@@ -519,6 +559,7 @@ export default function App() {
                                 <tr>
                                   <th className="p-2">#</th>
                                   <th className="p-2">Machine Name</th>
+                                  <th className="p-2">Section</th>
                                   <th className="p-2">Shift</th>
                                   <th className="p-2">Details</th>
                                   <th className="p-2">Cause</th>
@@ -534,6 +575,7 @@ export default function App() {
                                   <tr key={eIdx}>
                                     <td className="p-2 font-bold">{eIdx + 1}</td>
                                     <td className="p-2 font-semibold">{entry.machineName || '-'}</td>
+                                    <td className="p-2 font-semibold">{entry.section || '-'}</td>
                                     <td className="p-2 font-bold text-center">{entry.shift || report.shift || '-'}</td>
                                     <td className="p-2 max-w-[220px] whitespace-normal break-words">{entry.breakdownDetails || '-'}</td>
                                     <td className="p-2 max-w-[180px] whitespace-normal break-words">{entry.rootCause || '-'}</td>

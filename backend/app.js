@@ -161,24 +161,62 @@ app.post("/api/auth/login-face", async (req, res) => {
 });
 
 // =================== REPORT ROUTES ===================
+const reportPayload = (body) => {
+  const { reportDate, shift, entries } = body;
+  const date = new Date(`${reportDate}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate || '') || Number.isNaN(date.getTime()) ||
+      date.toISOString().slice(0, 10) !== reportDate || !shift ||
+      !Array.isArray(entries) || !entries.length ||
+      entries.some(entry => !entry || typeof entry.machineName !== 'string' || !entry.machineName.trim() ||
+        !Number.isFinite(Number(entry.downTimeHours ?? 0)) || Number(entry.downTimeHours ?? 0) < 0 ||
+        !Number.isFinite(Number(entry.manpowerUsed ?? 0)) || Number(entry.manpowerUsed ?? 0) < 0)) return null;
+  return {
+    reportDate, shift, entries,
+    totalDownTime: Number(entries.reduce((sum, entry) => sum + Number(entry.downTimeHours || 0), 0).toFixed(2)),
+    totalManPower: entries.reduce((sum, entry) => sum + Number(entry.manpowerUsed || 0), 0)
+  };
+};
+
 // 3. Save Breakdown Report
 app.post("/api/reports", async (req, res) => {
   try {
-    const { reportDate, shift, entries, totalDownTime, totalManPower } = req.body;
-    if (!reportDate || !shift || !Array.isArray(entries) || entries.length === 0) {
-      return res.status(400).json({ error: "Report date, shift aur breakdown entries zaroori hain." });
+    const payload = reportPayload(req.body);
+    if (!payload) {
+      return res.status(400).json({ error: "Valid date, shift, machine name aur non-negative downtime/manpower zaroori hain." });
     }
-    const report = new BreakdownReport({
-      reportDate,
-      shift,
-      entries: entries || [],
-      totalDownTime: Number(totalDownTime) || 0,
-      totalManPower: Number(totalManPower) || 0
-    });
+    const report = new BreakdownReport(payload);
     const saved = await report.save();
     res.status(201).json(saved);
   } catch (error) {
     console.error("Save Report Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update an existing report without creating a second history record.
+app.put("/api/reports/:id", async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: "Invalid report ID." });
+    }
+    const payload = reportPayload(req.body);
+    if (!payload) return res.status(400).json({ error: "Valid date, shift, machine name aur non-negative downtime/manpower zaroori hain." });
+    const filter = { _id: req.params.id };
+    if (req.body.expectedUpdatedAt) {
+      const timestamp = new Date(req.body.expectedUpdatedAt);
+      if (Number.isNaN(timestamp.getTime())) return res.status(400).json({ error: "Invalid report update timestamp." });
+      filter.updatedAt = timestamp;
+    }
+    const updated = await BreakdownReport.findOneAndUpdate(filter, { $set: payload }, { new: true, runValidators: true });
+    if (!updated) {
+      const exists = await BreakdownReport.exists({ _id: req.params.id });
+      return res.status(exists ? 409 : 404).json({ error: exists
+        ? "Report kisi aur ne update ki hai. Draft safe hai; History refresh karke latest report check karein."
+        : "Report nahi mili. Shayad delete ho chuki hai; aapka edit draft safe hai." });
+    }
+    res.json(updated);
+  } catch (error) {
+    console.error("Update Report Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
