@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus,
   Trash2,
@@ -7,7 +7,10 @@ import {
   History,
   ClipboardList,
   CheckCircle2,
-  RefreshCw
+  RefreshCw,
+  CalendarDays,
+  ChevronRight,
+  ArrowLeft
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { requestApi } from './api.js';
@@ -38,6 +41,22 @@ export default function App() {
 
   const [historyRecords, setHistoryRecords] = useState([]);
   const [filterDate, setFilterDate] = useState('');
+  const [openHistoryDate, setOpenHistoryDate] = useState(null);
+  const dateGroups = useMemo(() => {
+    const grouped = new Map();
+    historyRecords.forEach(report => {
+      const date = report.reportDate;
+      if (!grouped.has(date)) grouped.set(date, []);
+      grouped.get(date).push(report);
+    });
+    return [...grouped].sort(([a], [b]) => b.localeCompare(a)).map(([date, reports]) => ({
+      date, reports,
+      downtime: reports.reduce((sum, report) => sum + (Number(report.totalDownTime) || 0), 0),
+      entries: reports.reduce((sum, report) => sum + (report.entries?.length || 0), 0)
+    }));
+  }, [historyRecords]);
+  const selectedDateGroup = dateGroups.find(group => group.date === openHistoryDate);
+
 
   // Breakdown Reports Fetch Logic
   const fetchHistory = async (date = '') => {
@@ -146,6 +165,7 @@ export default function App() {
         }
       ]);
       setFilterDate('');
+      setOpenHistoryDate(reportDate);
       setActiveTab('history');
     } catch (err) {
       setError(err.message);
@@ -188,7 +208,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 pb-16 font-sans">
+    <div className="portal-background min-h-screen text-slate-900 pb-16 font-sans">
       <header className="bg-slate-900 text-white shadow sticky top-0 z-40 print:hidden">
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-4">
           <div className="flex items-center gap-3">
@@ -211,7 +231,7 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('history')}
+              onClick={() => { setOpenHistoryDate(null); setActiveTab('history'); }}
               className={`px-3 py-1.5 rounded-md font-medium text-xs transition ${
                 activeTab === 'history' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
               }`}
@@ -230,15 +250,15 @@ export default function App() {
         )}
         {activeTab === 'entry' && (
           <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-md border border-slate-200 p-6 print:shadow-none print:border-none">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6 pb-6 border-b border-slate-200">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">Report Date</label>
+            <div className="flex flex-wrap items-end justify-between gap-4 mb-6 pb-5 border-b border-sky-100">
+              <div className="w-44 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 shadow-sm">
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-sky-700 mb-1">Report Date</label>
                 <input
                   type="date"
                   required
                   value={reportDate}
                   onChange={(e) => setReportDate(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  className="w-full border border-sky-200 rounded-md px-2 py-1 text-xs text-sky-900 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400 font-semibold"
                 />
               </div>
 
@@ -261,7 +281,7 @@ export default function App() {
             </div>
 
             <div className="overflow-x-auto border border-slate-200 rounded-lg mb-6">
-              <table className="w-full text-left text-xs border-collapse min-w-[1150px] print:min-w-full">
+              <table className="color-table entry-table w-full text-left text-xs border-collapse min-w-[1150px] print:min-w-full">
                 <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase">
                   <tr>
                     <th className="p-2 border-r text-center w-12">SL. NO.</th>
@@ -293,24 +313,17 @@ export default function App() {
                         />
                       </td>
                       <td className="p-2 border-r text-center">
-                        <div role="group" aria-label={`Shift for row ${idx + 1}`} className="inline-flex rounded-lg border border-slate-300 bg-slate-100 p-1 gap-1 print:hidden">
-                          {['D', 'N'].map((option) => (
-                            <button
-                              key={option}
-                              type="button"
-                              aria-label={`${option === 'D' ? 'Day' : 'Night'} shift for row ${idx + 1}`}
-                              aria-pressed={row.shift === option}
-                              onClick={() => handleRowChange(idx, 'shift', option)}
-                              className={`rounded-md px-3 py-1.5 font-bold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 ${
-                                row.shift === option
-                                  ? option === 'D' ? 'bg-amber-400 text-amber-950 shadow-sm' : 'bg-indigo-600 text-white shadow-sm'
-                                  : 'text-slate-500 hover:bg-white'
-                              }`}
-                            >
-                              {option}
-                            </button>
-                          ))}
-                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-label={`Night shift for row ${idx + 1}`}
+                          aria-checked={row.shift === 'N'}
+                          title="Click to switch between Day and Night shift"
+                          onClick={() => handleRowChange(idx, 'shift', row.shift === 'D' ? 'N' : 'D')}
+                          className={`shift-toggle print:hidden ${row.shift === 'D' ? 'shift-day' : 'shift-night'}`}
+                        >
+                          {row.shift}
+                        </button>
                         <span className="hidden print:inline font-bold">{row.shift}</span>
                       </td>
                       <td className="p-2 border-r">
@@ -420,112 +433,130 @@ export default function App() {
         )}
 
         {activeTab === 'history' && (
-          <div className="bg-white rounded-xl shadow-md border border-slate-200 p-6 print:shadow-none print:border-none">
-            <div className="flex flex-wrap items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-200 print:hidden">
+          <section className="history-panel rounded-2xl border border-violet-200 p-4 sm:p-6 shadow-md print:shadow-none print:border-none">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6 print:hidden">
               <div>
-                <h2 className="text-lg font-bold text-slate-800">Historical Breakdown Records</h2>
-                <p className="text-xs text-slate-500">Filter, inspect, and export previous days</p>
+                <h2 className="text-xl font-bold text-violet-900 flex items-center gap-2"><CalendarDays size={22} /> Breakdown History</h2>
+                <p className="text-sm text-fuchsia-700 mt-1">Choose a date to open its breakdown reports</p>
               </div>
-
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
+                  aria-label="Filter history by date"
                   type="date"
                   value={filterDate}
-                  onChange={(e) => setFilterDate(e.target.value)}
-                  className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none"
+                  onChange={(e) => { setFilterDate(e.target.value); setOpenHistoryDate(e.target.value || null); }}
+                  className="w-40 border border-violet-200 bg-white rounded-lg px-2 py-2 text-xs text-violet-800 font-semibold outline-none focus:ring-2 focus:ring-violet-400"
                 />
                 {filterDate && (
-                  <button onClick={() => setFilterDate('')} className="text-xs text-blue-600 hover:underline">
+                  <button type="button" onClick={() => { setFilterDate(''); setOpenHistoryDate(null); }} className="text-xs font-semibold text-fuchsia-700 bg-fuchsia-100 px-3 py-2 rounded-lg">
                     Clear Filter
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => fetchHistory(filterDate)}
-                  className="p-2 border rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
-                >
+                <button type="button" onClick={() => fetchHistory(filterDate)} aria-label="Refresh history" className="p-2 border border-violet-200 bg-white rounded-lg hover:bg-violet-100 text-violet-700">
                   <RefreshCw size={16} />
                 </button>
               </div>
             </div>
 
             {loading ? (
-              <div className="py-12 text-center text-slate-500 font-medium">Loading reports...</div>
-            ) : historyRecords.length === 0 ? (
-              <div className="py-12 text-center text-slate-400">
-                <History size={48} className="mx-auto mb-2 opacity-50" />
+              <div className="py-12 text-center text-violet-600 font-medium">Loading reports...</div>
+            ) : dateGroups.length === 0 ? (
+              <div className="py-12 text-center text-fuchsia-600">
+                <History size={48} className="mx-auto mb-3 opacity-50" />
                 <p>Koi breakdown report record nahi mila.</p>
               </div>
             ) : (
-              <div className="space-y-6">
-                {historyRecords.map((report, rIdx) => (
-                  <div key={report._id || rIdx} className="border border-slate-200 rounded-lg overflow-hidden shadow-sm page-break-inside-avoid">
-                    <div className="bg-slate-100 px-4 py-3 flex flex-wrap justify-between items-center gap-2 border-b border-slate-200">
-                      <div>
-                        <span className="font-bold text-slate-800 text-sm mr-3">Date: {report.reportDate}</span>
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6 print:hidden">
+                  {dateGroups.map((group, index) => (
+                    <button
+                      key={group.date}
+                      type="button"
+                      aria-expanded={openHistoryDate === group.date}
+                      aria-controls="history-date-reports"
+                      onClick={() => setOpenHistoryDate(openHistoryDate === group.date ? null : group.date)}
+                      className={`date-card date-theme-${index % 6} ${openHistoryDate === group.date ? 'date-card-selected' : ''}`}
+                    >
+                      <div className="flex justify-between items-center mb-3">
+                        <CalendarDays size={20} />
+                        <ChevronRight size={18} className={openHistoryDate === group.date ? 'rotate-90' : ''} />
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-semibold text-slate-600">
-                          Total Hours: <span className="text-blue-600 font-bold">{report.totalDownTime} hrs</span> | Manpower: <span className="text-blue-600 font-bold">{report.totalManPower}</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => exportToExcel(report.entries, report.reportDate, report.shift)}
-                          className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1.5 rounded transition cursor-pointer"
-                        >
-                          <Download size={14} /> Download Excel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteReport(report._id)}
-                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition cursor-pointer"
-                          title="Delete Record"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                      <div className="text-lg font-extrabold mb-2">{group.date}</div>
+                      <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                        <span className="date-card-badge">{group.reports.length} reports</span>
+                        <span className="date-card-badge">{group.entries} breakdowns</span>
                       </div>
-                    </div>
+                      <p className="text-xs font-bold mt-3">Downtime: {group.downtime.toFixed(2)} hrs</p>
+                    </button>
+                  ))}
+                </div>
 
-                    {/* Breakdown Entries Table for this report */}
-                    <div className="overflow-x-auto p-3">
-                      <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                          <tr className="border-b border-slate-200 text-slate-500 font-semibold bg-slate-50/50">
-                            <th className="p-2">#</th>
-                            <th className="p-2">Machine Name</th>
-                            <th className="p-2">Shift</th>
-                            <th className="p-2">Details</th>
-                            <th className="p-2">Cause</th>
-                            <th className="p-2">Corrective Action</th>
-                            <th className="p-2 text-center">Time</th>
-                            <th className="p-2 text-center">Downtime</th>
-                            <th className="p-2 text-center">Manpower</th>
-                            <th className="p-2">Spares</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {(report.entries || []).map((entry, eIdx) => (
-                            <tr key={eIdx} className="hover:bg-slate-50">
-                              <td className="p-2 text-slate-400 font-medium">{eIdx + 1}</td>
-                              <td className="p-2">{entry.machineName || '-'}</td>
-                              <td className="p-2">{entry.shift || report.shift || '-'}</td>
-                              <td className="p-2 max-w-[200px] truncate" title={entry.breakdownDetails}>{entry.breakdownDetails || '-'}</td>
-                              <td className="p-2 max-w-[150px] truncate" title={entry.rootCause}>{entry.rootCause || '-'}</td>
-                              <td className="p-2 max-w-[150px] truncate" title={entry.correctiveAction}>{entry.correctiveAction || '-'}</td>
-                              <td className="p-2 text-center">{entry.startTime} - {entry.endTime}</td>
-                              <td className="p-2 text-center font-bold text-red-600">{entry.downTimeHours} hrs</td>
-                              <td className="p-2 text-center">{entry.manpowerUsed}</td>
-                              <td className="p-2">{entry.sparesUsed || '-'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                <div id="history-date-reports">
+                  {selectedDateGroup ? (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap justify-between items-center gap-3 rounded-xl bg-white/80 border border-violet-200 p-3">
+                        <h3 className="font-bold text-violet-900">Reports for {selectedDateGroup.date}</h3>
+                        <button type="button" onClick={() => setOpenHistoryDate(null)} className="flex items-center gap-1 text-xs font-bold text-fuchsia-700 print:hidden"><ArrowLeft size={14} /> All dates</button>
+                      </div>
+                      {selectedDateGroup.reports.map((report, rIdx) => (
+                        <article key={report._id || rIdx} className="rounded-xl overflow-hidden border border-sky-200 shadow-sm bg-white page-break-inside-avoid">
+                          <div className="report-card-header px-4 py-3 flex flex-wrap justify-between items-center gap-3">
+                            <div className="flex flex-wrap gap-3 items-center">
+                              <span className="text-sm font-bold text-sky-900">Report {rIdx + 1}</span>
+                              <span className="text-xs font-semibold text-rose-800 bg-rose-100 px-2 py-1 rounded-lg">Downtime: {report.totalDownTime} hrs</span>
+                              <span className="text-xs font-semibold text-amber-900 bg-amber-100 px-2 py-1 rounded-lg">Manpower: {report.totalManPower}</span>
+                            </div>
+                            <div className="flex items-center gap-2 print:hidden">
+                              <button type="button" onClick={() => exportToExcel(report.entries, report.reportDate, report.shift)} className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg">
+                                <Download size={14} /> Download Excel
+                              </button>
+                              <button type="button" onClick={() => handleDeleteReport(report._id)} className="p-2 text-rose-700 bg-rose-100 hover:bg-rose-200 rounded-lg" title="Delete Record" aria-label={`Delete report ${rIdx + 1} for ${report.reportDate}`}><Trash2 size={16} /></button>
+                            </div>
+                          </div>
+                          <div className="overflow-x-auto p-3">
+                            <table className="color-table history-table w-full min-w-[950px] text-left text-xs border-collapse">
+                              <thead>
+                                <tr>
+                                  <th className="p-2">#</th>
+                                  <th className="p-2">Machine Name</th>
+                                  <th className="p-2">Shift</th>
+                                  <th className="p-2">Details</th>
+                                  <th className="p-2">Cause</th>
+                                  <th className="p-2">Corrective Action</th>
+                                  <th className="p-2 text-center">Time</th>
+                                  <th className="p-2 text-center">Downtime</th>
+                                  <th className="p-2 text-center">Manpower</th>
+                                  <th className="p-2">Spares</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(report.entries || []).map((entry, eIdx) => (
+                                  <tr key={eIdx}>
+                                    <td className="p-2 font-bold">{eIdx + 1}</td>
+                                    <td className="p-2 font-semibold">{entry.machineName || '-'}</td>
+                                    <td className="p-2 font-bold text-center">{entry.shift || report.shift || '-'}</td>
+                                    <td className="p-2 max-w-[220px] whitespace-normal break-words">{entry.breakdownDetails || '-'}</td>
+                                    <td className="p-2 max-w-[180px] whitespace-normal break-words">{entry.rootCause || '-'}</td>
+                                    <td className="p-2 max-w-[180px] whitespace-normal break-words">{entry.correctiveAction || '-'}</td>
+                                    <td className="p-2 text-center">{entry.startTime || '-'} – {entry.endTime || '-'}</td>
+                                    <td className="p-2 text-center font-bold">{entry.downTimeHours} hrs</td>
+                                    <td className="p-2 text-center font-semibold">{entry.manpowerUsed}</td>
+                                    <td className="p-2">{entry.sparesUsed || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </article>
+                      ))}
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-violet-300 bg-white/60 p-8 text-center text-violet-700 print:hidden">Upar kisi date block par click karke reports dekhein.</div>
+                  )}
+                </div>
+              </>
             )}
-          </div>
+          </section>
         )}
       </main>
     </div>
