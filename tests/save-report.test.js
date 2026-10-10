@@ -47,10 +47,11 @@ test('submit waits for DB, persists fields, and date-filtered history returns re
   t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
   const url = `http://127.0.0.1:${server.address().port}`;
   const payload = {
-    reportDate: '2026-10-10', shift: 'Shift C', totalDownTime: 2, totalManPower: 3,
-    entries: [{ machineId: 'M-01', machineName: 'Motor', startTime: '23:00',
+    reportDate: '2026-10-10', shift: 'D / N', totalDownTime: 2, totalManPower: 3,
+    entries: [{ shift: 'N', machineName: 'Motor', startTime: '23:00',
       endTime: '01:00', downTimeHours: 2, manpowerUsed: 3, rootCause: 'Bearing',
-      correctiveAction: 'Replaced bearing', sparesUsed: 'Bearing', bdNo: 'BD-1' }]
+      correctiveAction: 'Replaced bearing', sparesUsed: 'Bearing' },
+      { shift: 'D', machineName: 'Pump', downTimeHours: 0, manpowerUsed: 0 }]
   };
   const post = body => fetch(`${url}/api/reports`, {
     signal: AbortSignal.timeout(3000), method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
@@ -82,6 +83,7 @@ test('submit waits for DB, persists fields, and date-filtered history returns re
   const saved = await response.json();
   assert.ok(saved._id);
   assert.deepEqual(saved.entries, payload.entries);
+  assert.deepEqual(saved.entries.map(entry => entry.shift), ['N', 'D']);
   assert.equal(saved.totalDownTime, 2);
   assert.equal(saved.totalManPower, 3);
   assert.equal(attempts, 2);

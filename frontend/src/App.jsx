@@ -18,14 +18,13 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
-  const [shift, setShift] = useState('Shift A');
 
   const [rows, setRows] = useState([
     {
       id: 1,
-      machineId: '',
+
       machineName: '',
-      bdNo: '',
+      shift: 'D',
       breakdownDetails: '',
       rootCause: '',
       correctiveAction: '',
@@ -85,9 +84,9 @@ export default function App() {
       ...rows,
       {
         id: Date.now(),
-        machineId: '',
+
         machineName: '',
-        bdNo: '',
+        shift: 'D',
         breakdownDetails: '',
         rootCause: '',
         correctiveAction: '',
@@ -115,7 +114,7 @@ export default function App() {
     setError('');
     const payload = {
       reportDate,
-      shift,
+      shift: [...new Set(rows.map(row => row.shift))].join(' / '),
       entries: rows,
       totalDownTime: Number(totalDownTime),
       totalManPower: Number(totalManPower)
@@ -133,9 +132,9 @@ export default function App() {
       setRows([
         {
           id: Date.now(),
-          machineId: '',
+
           machineName: '',
-          bdNo: '',
+          shift: 'D',
           breakdownDetails: '',
           rootCause: '',
           correctiveAction: '',
@@ -170,10 +169,8 @@ export default function App() {
     const formattedData = (entries || []).map((row, idx) => ({
       'SL. NO.': idx + 1,
       'DATE': dateStr,
-      'SHIFT': shiftStr,
-      'MACHINE I.D': row.machineId,
       'MACHINE NAME': row.machineName,
-      'B/D. NO.': row.bdNo,
+      'SHIFT': row.shift || shiftStr || '-',
       'BREAK DOWN DETAILS': row.breakdownDetails,
       'ROOT CAUSE': row.rootCause,
       'CORECTIVE & PREVENTIVE ACTION': row.correctiveAction,
@@ -187,7 +184,7 @@ export default function App() {
     const worksheet = XLSX.utils.json_to_sheet(formattedData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Breakdown_Report');
-    XLSX.writeFile(workbook, `Breakdown_Report_${dateStr}_${shiftStr}.xlsx`);
+    XLSX.writeFile(workbook, `Breakdown_Report_${dateStr}.xlsx`);
   };
 
   return (
@@ -233,7 +230,7 @@ export default function App() {
         )}
         {activeTab === 'entry' && (
           <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-md border border-slate-200 p-6 print:shadow-none print:border-none">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6 pb-6 border-b border-slate-200">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6 pb-6 border-b border-slate-200">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">Report Date</label>
                 <input
@@ -245,24 +242,10 @@ export default function App() {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">Shift</label>
-                <select
-                  value={shift}
-                  onChange={(e) => setShift(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium bg-white"
-                >
-                  <option value="Shift A">Shift A (Morning)</option>
-                  <option value="Shift B">Shift B (Evening)</option>
-                  <option value="Shift C">Shift C (Night)</option>
-                  <option value="General Shift">General Shift</option>
-                </select>
-              </div>
-
               <div className="flex items-end justify-end gap-3 print:hidden">
                 <button
                   type="button"
-                  onClick={() => exportToExcel(rows, reportDate, shift)}
+                  onClick={() => exportToExcel(rows, reportDate)}
                   className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition shadow-sm cursor-pointer"
                 >
                   <Download size={16} /> Export Draft
@@ -278,13 +261,12 @@ export default function App() {
             </div>
 
             <div className="overflow-x-auto border border-slate-200 rounded-lg mb-6">
-              <table className="w-full text-left text-xs border-collapse min-w-[1250px] print:min-w-full">
+              <table className="w-full text-left text-xs border-collapse min-w-[1150px] print:min-w-full">
                 <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase">
                   <tr>
                     <th className="p-2 border-r text-center w-12">SL. NO.</th>
-                    <th className="p-2 border-r w-28">Machine I.D</th>
                     <th className="p-2 border-r w-36">Machine Name</th>
-                    <th className="p-2 border-r w-24">B/D. No.</th>
+                    <th className="p-2 border-r w-24">Shift</th>
                     <th className="p-2 border-r w-48">Break Down Details</th>
                     <th className="p-2 border-r w-44">Root Cause</th>
                     <th className="p-2 border-r w-48">Corrective Action</th>
@@ -304,30 +286,32 @@ export default function App() {
                         <input
                           type="text"
                           required
-                          placeholder="e.g. M-01"
-                          value={row.machineId}
-                          onChange={(e) => handleRowChange(idx, 'machineId', e.target.value)}
-                          className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </td>
-                      <td className="p-2 border-r">
-                        <input
-                          type="text"
-                          required
                           placeholder="Machine..."
                           value={row.machineName}
                           onChange={(e) => handleRowChange(idx, 'machineName', e.target.value)}
                           className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 outline-none"
                         />
                       </td>
-                      <td className="p-2 border-r">
-                        <input
-                          type="text"
-                          placeholder="BD-101"
-                          value={row.bdNo}
-                          onChange={(e) => handleRowChange(idx, 'bdNo', e.target.value)}
-                          className="w-full border rounded px-2 py-1 text-xs outline-none"
-                        />
+                      <td className="p-2 border-r text-center">
+                        <div role="group" aria-label={`Shift for row ${idx + 1}`} className="inline-flex rounded-lg border border-slate-300 bg-slate-100 p-1 gap-1 print:hidden">
+                          {['D', 'N'].map((option) => (
+                            <button
+                              key={option}
+                              type="button"
+                              aria-label={`${option === 'D' ? 'Day' : 'Night'} shift for row ${idx + 1}`}
+                              aria-pressed={row.shift === option}
+                              onClick={() => handleRowChange(idx, 'shift', option)}
+                              className={`rounded-md px-3 py-1.5 font-bold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 ${
+                                row.shift === option
+                                  ? option === 'D' ? 'bg-amber-400 text-amber-950 shadow-sm' : 'bg-indigo-600 text-white shadow-sm'
+                                  : 'text-slate-500 hover:bg-white'
+                              }`}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </div>
+                        <span className="hidden print:inline font-bold">{row.shift}</span>
                       </td>
                       <td className="p-2 border-r">
                         <textarea
@@ -406,7 +390,7 @@ export default function App() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-slate-100 font-bold text-slate-800 border-t-2 border-slate-300">
-                    <td colSpan={9} className="p-3 text-right pr-4 text-sm">Total</td>
+                    <td colSpan={8} className="p-3 text-right pr-4 text-sm">Total</td>
                     <td className="p-3 text-center border-x text-sm text-blue-700 bg-blue-50">{totalDownTime}</td>
                     <td className="p-3 text-center border-r text-sm text-blue-700 bg-blue-50">{totalManPower}</td>
                     <td colSpan={2}></td>
@@ -479,7 +463,6 @@ export default function App() {
                     <div className="bg-slate-100 px-4 py-3 flex flex-wrap justify-between items-center gap-2 border-b border-slate-200">
                       <div>
                         <span className="font-bold text-slate-800 text-sm mr-3">Date: {report.reportDate}</span>
-                        <span className="bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded font-semibold">{report.shift}</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="text-xs font-semibold text-slate-600">
@@ -509,9 +492,8 @@ export default function App() {
                         <thead>
                           <tr className="border-b border-slate-200 text-slate-500 font-semibold bg-slate-50/50">
                             <th className="p-2">#</th>
-                            <th className="p-2">Machine ID</th>
                             <th className="p-2">Machine Name</th>
-                            <th className="p-2">BD No</th>
+                            <th className="p-2">Shift</th>
                             <th className="p-2">Details</th>
                             <th className="p-2">Cause</th>
                             <th className="p-2">Corrective Action</th>
@@ -525,9 +507,8 @@ export default function App() {
                           {(report.entries || []).map((entry, eIdx) => (
                             <tr key={eIdx} className="hover:bg-slate-50">
                               <td className="p-2 text-slate-400 font-medium">{eIdx + 1}</td>
-                              <td className="p-2 font-bold text-slate-700">{entry.machineId || '-'}</td>
                               <td className="p-2">{entry.machineName || '-'}</td>
-                              <td className="p-2">{entry.bdNo || '-'}</td>
+                              <td className="p-2">{entry.shift || report.shift || '-'}</td>
                               <td className="p-2 max-w-[200px] truncate" title={entry.breakdownDetails}>{entry.breakdownDetails || '-'}</td>
                               <td className="p-2 max-w-[150px] truncate" title={entry.rootCause}>{entry.rootCause || '-'}</td>
                               <td className="p-2 max-w-[150px] truncate" title={entry.correctiveAction}>{entry.correctiveAction || '-'}</td>
