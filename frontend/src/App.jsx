@@ -16,6 +16,7 @@ import {
 import * as XLSX from 'xlsx';
 import { requestApi } from './api.js';
 import { SummaryCards, MachineAnalysis } from './ReportInsights.jsx';
+import TenDayBreakdownChart from './TenDayBreakdownChart.jsx';
 import { DRAFT_KEY, EDIT_DRAFT_KEY, today, emptyRow, downtime, normaliseRows, readDraft, writeDraft, filterReports } from './reportTools.js';
 
 const loadInitialForm = () => {
@@ -461,6 +462,7 @@ export default function App() {
               </button>
             </div>
             </fieldset>
+            <TenDayBreakdownChart />
           </form>
         )}
 

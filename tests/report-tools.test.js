@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyseEntries, filterReports, downtime, readDraft, writeDraft, DRAFT_KEY, EDIT_DRAFT_KEY } from '../frontend/src/reportTools.js';
+import { analyseEntries, filterReports, downtime, readDraft, writeDraft, DRAFT_KEY, EDIT_DRAFT_KEY, lastTenDays } from '../frontend/src/reportTools.js';
 
 const entries = [
   { machineName: 'Pump', section: 'SMS', shift: 'D', downTimeHours: 2, manpowerUsed: 3 },
@@ -11,6 +11,28 @@ const reports = [
   { _id: '1', reportDate: '2026-10-10', shift: 'D / N', entries, totalDownTime: 7 },
   { _id: '2', reportDate: '2026-10-09', shift: 'N', entries: [{ machineName: 'Pump', downTimeHours: 3 }] }
 ];
+
+test('last ten days count entries across reports, include gaps and exclude older/future dates', () => {
+  const days = lastTenDays([
+    ...reports,
+    { reportDate: '2026-10-10', entries: [{}, {}] },
+    { reportDate: '2026-10-01', entries: [{}] },
+    { reportDate: '2026-09-30', entries: [{}, {}] },
+    { reportDate: '2026-10-11', entries: [{}] },
+    { reportDate: '2026-10-05' }
+  ], '2026-10-10');
+  assert.equal(days.length, 10);
+  assert.deepEqual(days[0], { date: '2026-10-01', count: 1 });
+  assert.deepEqual(days[9], { date: '2026-10-10', count: 5 });
+  assert.equal(days[8].count, 1);
+  assert.equal(days[4].count, 0);
+  assert.equal(days.reduce((sum, day) => sum + day.count, 0), 7);
+  assert.deepEqual(lastTenDays([], '2026-01-05').map(day => day.date), [
+    '2025-12-27', '2025-12-28', '2025-12-29', '2025-12-30', '2025-12-31',
+    '2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05'
+  ]);
+  assert.equal(lastTenDays([], '2024-03-01')[8].date, '2024-02-29');
+});
 
 test('overnight and same-day downtime calculations', () => {
   assert.equal(downtime('23:30', '01:00'), 1.5);

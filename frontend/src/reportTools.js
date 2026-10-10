@@ -71,3 +71,19 @@ export function analyseEntries(entries) {
   result.machines = [...machines.values()].sort((a, b) => b.hours - a.hours || b.count - a.count || a.name.localeCompare(b.name));
   return result;
 }
+
+// Include today and the preceding nine calendar dates, including zero-count days.
+export function lastTenDays(reports, endDate = today()) {
+  const end = new Date(`${endDate}T00:00:00Z`);
+  const days = Array.from({ length: 10 }, (_, index) => {
+    const date = new Date(end);
+    date.setUTCDate(date.getUTCDate() - 9 + index);
+    return { date: date.toISOString().slice(0, 10), count: 0 };
+  });
+  const byDate = new Map(days.map(day => [day.date, day]));
+  reports.forEach(report => {
+    const day = byDate.get(report.reportDate);
+    if (day && Array.isArray(report.entries)) day.count += report.entries.length;
+  });
+  return days;
+}
