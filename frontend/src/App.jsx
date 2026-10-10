@@ -10,12 +10,13 @@ import {
   RefreshCw
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-
-const API_BASE_URL = 'http://localhost:5000/api';
+import { requestApi } from './api.js';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('entry'); // 'entry' ya 'history'
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [shift, setShift] = useState('Shift A');
 
@@ -43,13 +44,11 @@ export default function App() {
   const fetchHistory = async (date = '') => {
     try {
       setLoading(true);
-      const url = date ? `${API_BASE_URL}/reports?date=${date}` : `${API_BASE_URL}/reports`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to fetch history');
+      setError('');
+      const data = await requestApi(date ? `/reports?date=${encodeURIComponent(date)}` : '/reports');
       setHistoryRecords(data);
     } catch (err) {
-      console.warn('API error:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -111,7 +110,9 @@ export default function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    if (saving) return;
+    setSaving(true);
+    setError('');
     const payload = {
       reportDate,
       shift,
@@ -121,15 +122,13 @@ export default function App() {
     };
 
     try {
-      const res = await fetch(`${API_BASE_URL}/reports`, {
+      const data = await requestApi('/reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Save failed');
-
-      alert('Report MongoDB Atlas me successfully save ho gaya!');
+      if (!data?._id) throw new Error('Server ne saved report confirm nahi ki. History check karein.');
+      alert('Report database me successfully save ho gaya!');
       // Form reset to fresh state
       setRows([
         {
@@ -147,21 +146,19 @@ export default function App() {
           sparesUsed: ''
         }
       ]);
+      setFilterDate('');
       setActiveTab('history');
     } catch (err) {
-      alert('Save Error: ' + err.message);
+      setError(err.message);
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   const handleDeleteReport = async (reportId) => {
     if (!window.confirm('Kya aap is report record ko delete karna chahte hain?')) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/reports/${reportId}`, {
-        method: 'DELETE'
-      });
-      if (!res.ok) throw new Error('Delete failed');
+      await requestApi(`/reports/${reportId}`, { method: 'DELETE' });
       setHistoryRecords(historyRecords.filter((r) => r._id !== reportId));
       alert('Report record deleted!');
     } catch (err) {
@@ -229,6 +226,11 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 mt-8 print:m-0 print:p-0 print:max-w-full">
+        {error && (
+          <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
         {activeTab === 'entry' && (
           <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-md border border-slate-200 p-6 print:shadow-none print:border-none">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6 pb-6 border-b border-slate-200">
@@ -424,10 +426,10 @@ export default function App() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={saving}
                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition shadow-md disabled:opacity-50 cursor-pointer"
               >
-                <CheckCircle2 size={18} /> {loading ? 'Saving...' : 'Submit Daily Report'}
+                <CheckCircle2 size={18} /> {saving ? 'Saving...' : 'Submit Daily Report'}
               </button>
             </div>
           </form>
