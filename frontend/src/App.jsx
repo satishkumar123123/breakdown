@@ -5,7 +5,6 @@ import {
   Download,
   Printer,
   History,
-  ClipboardList,
   CheckCircle2,
   RefreshCw,
   CalendarDays,
@@ -226,42 +225,52 @@ export default function App() {
 
   return (
     <div className="portal-background min-h-screen text-slate-900 pb-16 font-sans">
-      <header className="bg-slate-900 text-white shadow sticky top-0 z-40 print:hidden">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <ClipboardList className="text-blue-400" />
-            <div>
-              <h1 className="text-lg font-bold tracking-wide">Daily Breakdown Reporting Portal</h1>
-              <p className="text-xs text-slate-400">Plant Maintenance & Operations Dashboard</p>
-            </div>
-          </div>
-
-          <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => { setError(''); setActiveTab('entry'); }}
-              className={`px-3 py-1.5 rounded-md font-medium text-xs transition ${
-                activeTab === 'entry' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              {editingReport ? 'Edit Report' : 'New Report'}
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => { setOpenHistoryDate(null); setActiveTab('history'); }}
-              className={`px-3 py-1.5 rounded-md font-medium text-xs transition ${
-                activeTab === 'history' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              History Log
-            </button>
-          </div>
-        </div>
+      <header className="brand-heading max-w-7xl mx-auto px-4 pt-8 sm:pt-10 pb-6 text-center">
+        <h1 className="brand-title">S G Green annovation</h1>
+        <p className="brand-subtitle mt-2">(breakdown report)</p>
+        <div className="brand-divider mx-auto mt-4" aria-hidden="true" />
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 mt-8 print:m-0 print:p-0 print:max-w-full">
+      <main className="max-w-7xl mx-auto px-4 print:m-0 print:p-0 print:max-w-full">
+        <div className="report-toolbar flex flex-wrap items-center gap-3 mb-5 p-3 sm:p-4 print:hidden">
+          <div className="date-control w-44 rounded-xl px-3 py-2">
+            <label htmlFor="toolbar-report-date" className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-teal-800 mb-1"><CalendarDays size={12} /> {activeTab === 'entry' ? 'Report Date' : 'History Date'}</label>
+            <input
+              id="toolbar-report-date"
+              aria-label={activeTab === 'entry' ? 'Report date' : 'Filter history by date'}
+              form={activeTab === 'entry' ? 'breakdown-report-form' : undefined}
+              disabled={saving}
+              type="date"
+              required={activeTab === 'entry'}
+              value={activeTab === 'entry' ? reportDate : filterDate}
+              onChange={e => {
+                if (activeTab === 'entry') setReportDate(e.target.value);
+                else { setFilterDate(e.target.value); setOpenHistoryDate(e.target.value || null); }
+              }}
+              className="w-full border border-teal-200 rounded-md px-2 py-1 text-xs text-teal-900 bg-white/90 focus:outline-none focus:ring-2 focus:ring-teal-400 font-semibold"
+            />
+          </div>
+          <nav aria-label="Report pages" className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={saving}
+              aria-pressed={activeTab === 'entry'}
+              onClick={() => { setError(''); setActiveTab('entry'); }}
+              className={`page-block page-block-entry ${activeTab === 'entry' ? 'page-block-active' : ''}`}
+            >
+              <Plus size={18} /> {editingReport ? 'Edit Entry' : 'New Entry'}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              aria-pressed={activeTab === 'history'}
+              onClick={() => { setOpenHistoryDate(null); setActiveTab('history'); }}
+              className={`page-block page-block-history ${activeTab === 'history' ? 'page-block-active' : ''}`}
+            >
+              <History size={18} /> History
+            </button>
+          </nav>
+        </div>
         {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex justify-between gap-3 print:hidden">{notice}<button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
         {error && (
           <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -269,21 +278,8 @@ export default function App() {
           </div>
         )}
         {activeTab === 'entry' && (
-          <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-md border border-slate-200 p-6 print:shadow-none print:border-none">
-            <div className="flex flex-wrap items-end justify-between gap-4 mb-6 pb-5 border-b border-sky-100">
-              <div className="w-44 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 shadow-sm">
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-sky-700 mb-1">Report Date</label>
-                <input
-                  aria-label="Report date"
-                  disabled={saving}
-                  type="date"
-                  required
-                  value={reportDate}
-                  onChange={(e) => setReportDate(e.target.value)}
-                  className="w-full border border-sky-200 rounded-md px-2 py-1 text-xs text-sky-900 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400 font-semibold"
-                />
-              </div>
-
+          <form id="breakdown-report-form" onSubmit={handleSubmit} className="entry-panel rounded-2xl p-4 sm:p-6 print:shadow-none print:border-none">
+            <div className="flex flex-wrap justify-end gap-4 mb-5 pb-4 border-b border-emerald-100 print:hidden">
               <div className="flex items-end justify-end gap-3 print:hidden">
                 <button
                   type="button"
@@ -306,8 +302,8 @@ export default function App() {
               <p role="status" className={`text-xs font-semibold ${storageError ? 'text-rose-700' : 'text-emerald-700'}`}>{storageError ? 'Auto-save unavailable. Is tab ko close karne se pehle report save/export karein.' : draftStatus}</p>
               {editingReport && <button type="button" onClick={cancelEdit} disabled={saving} className="text-xs font-bold text-rose-700 bg-rose-50 px-3 py-2 rounded-lg">Cancel Edit</button>}
             </div>
+            <p className="hidden print:block mb-3 font-semibold">Report date: {reportDate}</p>
             {editingReport && <p className="mb-4 text-sm font-semibold text-violet-800">Editing saved report • {reportDate}</p>}
-            <SummaryCards entries={rows.filter(row => row.machineName.trim())} label={`Current ${editingReport ? 'edit' : 'draft'} • ${reportDate} • unsaved changes`} />
             <fieldset disabled={saving} className="min-w-0">
             <div className="overflow-x-auto border border-slate-200 rounded-lg mb-6">
               <table className="color-table entry-table w-full text-left text-xs border-collapse min-w-[1250px] print:min-w-full">
@@ -474,13 +470,6 @@ export default function App() {
                 <p className="text-sm text-fuchsia-700 mt-1">Search machines, filter shifts, or choose a date to open reports</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <input
-                  aria-label="Filter history by date"
-                  type="date"
-                  value={filterDate}
-                  onChange={(e) => { setFilterDate(e.target.value); setOpenHistoryDate(e.target.value || null); }}
-                  className="w-40 border border-violet-200 bg-white rounded-lg px-2 py-2 text-xs text-violet-800 font-semibold outline-none focus:ring-2 focus:ring-violet-400"
-                />
                 <input type="search" aria-label="Search history by machine name" placeholder="Search machine..." value={filterMachine} onChange={e => setFilterMachine(e.target.value)} className="w-44 border border-sky-200 bg-white rounded-lg px-3 py-2 text-xs text-sky-900" />
                 <select aria-label="Filter history by section" value={filterSection} onChange={e => setFilterSection(e.target.value)} className="border border-emerald-200 bg-white rounded-lg px-3 py-2 text-xs text-emerald-900"><option value="">All sections</option>{sectionOptions.map(section => <option key={section} value={section}>{section}</option>)}</select>
                 <select aria-label="Filter history by shift" value={filterShift} onChange={e => setFilterShift(e.target.value)} className="border border-amber-200 bg-white rounded-lg px-3 py-2 text-xs text-amber-900"><option value="">All shifts</option><option value="D">D shift</option><option value="N">N shift</option></select>
