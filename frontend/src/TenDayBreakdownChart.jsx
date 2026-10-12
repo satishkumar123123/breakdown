@@ -5,7 +5,7 @@ import { lastTenDays, today } from './reportTools.js';
 
 const COLORS = ['#2563eb', '#7c3aed', '#db2777', '#e11d48', '#ea580c', '#ca8a04', '#16a34a', '#0d9488', '#0891b2', '#4f46e5'];
 
-export default function TenDayBreakdownChart() {
+export default function TenDayBreakdownChart({ onSelectDate, disabled = false }) {
   const [mode, setMode] = useState('bar');
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -55,16 +55,18 @@ export default function TenDayBreakdownChart() {
         <span className="rounded-lg bg-violet-100 text-violet-900 px-3 py-1.5">10-day total: {total} breakdowns</span>
         <span className="text-slate-600">Today included • zero-count dates also shown</span>
       </div>
+      <p className="text-xs text-violet-700 mb-3">Kisi bar ya date par click karke us din ki History details dekhein.</p>
       <div className="overflow-x-auto rounded-xl border border-white bg-white/80">
-        <svg viewBox="0 0 960 292" role="img" aria-label={`${mode === 'bar' ? 'Bar' : 'Line'} graph of last 10 days. ${summary}`} className="w-full min-w-[700px]">
+        <svg viewBox="0 0 960 292" role="group" aria-label={`${mode === 'bar' ? 'Bar' : 'Line'} graph of last 10 days. ${summary}`} className="w-full min-w-[700px]">
           <text x={left} y="18" fill="#64748b" fontSize="11" fontWeight="600">Number of breakdowns</text>
           {Array.from({ length: 5 }, (_, index) => {
             const y = bottom - index / 4 * (bottom - top);
             return <g key={index}><line x1={left} x2={left + plotWidth} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray={index ? '4 5' : undefined} /><text x={left - 12} y={y + 4} textAnchor="end" fill="#64748b" fontSize="11">{index * step}</text></g>;
           })}
           {mode === 'line' && points.slice(1).map((point, index) => <line key={point.date} x1={points[index].x} y1={points[index].y} x2={point.x} y2={point.y} stroke={COLORS[index]} strokeWidth="3" strokeLinecap="round" />)}
-          {points.map((point, index) => <g key={point.date}>
+          {points.map((point, index) => <g key={point.date} role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled} aria-label={`Open History for ${point.date}: ${point.count} breakdowns`} className="chart-date-target" onClick={() => { if (!disabled) onSelectDate?.(point.date); }} onKeyDown={event => { if (!disabled && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onSelectDate?.(point.date); } }}>
             <title>{point.date}: {point.count} breakdowns</title>
+            <rect className="chart-date-hitarea" x={point.x - gap / 2 + 3} y={top - 10} width={gap - 6} height={bottom - top + 43} rx="8" fill="transparent" />
             {mode === 'bar' && point.count > 0 ? <rect x={point.x - 23} y={point.y} width="46" height={bottom - point.y} rx="6" fill={COLORS[index]} opacity="0.88" /> : <circle cx={point.x} cy={point.y} r={mode === 'line' ? 5 : 3} fill={COLORS[index]} stroke="white" strokeWidth="2" />}
             <text x={point.x} y={point.y - 11} textAnchor="middle" fill={COLORS[index]} fontSize="13" fontWeight="800">{point.count}</text>
             <text x={point.x} y={bottom + 23} textAnchor="middle" fill={COLORS[index]} fontSize="12" fontWeight="700">{point.date.slice(8)}/{point.date.slice(5, 7)}</text>

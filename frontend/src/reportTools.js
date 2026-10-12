@@ -1,6 +1,13 @@
 export const DRAFT_KEY = 'breakdown-report-draft-v1';
 export const EDIT_DRAFT_KEY = 'breakdown-report-edit-v1';
 
+export function projectHomeUrl(currentUrl) {
+  try {
+    const url = new URL(currentUrl);
+    return ['http:', 'https:'].includes(url.protocol) ? `${url.origin}/` : '';
+  } catch { return ''; }
+}
+
 export const today = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;

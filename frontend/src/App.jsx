@@ -16,6 +16,7 @@ import * as XLSX from 'xlsx';
 import { requestApi } from './api.js';
 import { SummaryCards, MachineAnalysis } from './ReportInsights.jsx';
 import TenDayBreakdownChart from './TenDayBreakdownChart.jsx';
+import ProjectQrBlock from './ProjectQrBlock.jsx';
 import { DRAFT_KEY, EDIT_DRAFT_KEY, today, emptyRow, downtime, normaliseRows, readDraft, writeDraft, filterReports } from './reportTools.js';
 
 const loadInitialForm = () => {
@@ -93,6 +94,18 @@ export default function App() {
       fetchHistory();
     }
   }, [activeTab]);
+
+  const openChartDate = (date) => {
+    setFilterDate(date);
+    setOpenHistoryDate(date);
+    setFilterMachine('');
+    setFilterSection('');
+    setFilterShift('');
+    setError('');
+    setLoading(true);
+    setActiveTab('history');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const handleRowChange = (index, field, value) => {
     setRows(current => current.map((row, rowIndex) => {
@@ -270,6 +283,7 @@ export default function App() {
               <History size={18} /> History
             </button>
           </nav>
+          <ProjectQrBlock />
         </div>
         {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex justify-between gap-3 print:hidden">{notice}<button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
         {error && (
@@ -306,12 +320,11 @@ export default function App() {
             {editingReport && <p className="mb-4 text-sm font-semibold text-violet-800">Editing saved report • {reportDate}</p>}
             <fieldset disabled={saving} className="min-w-0">
             <div className="overflow-x-auto border border-slate-200 rounded-lg mb-6">
-              <table className="color-table entry-table w-full text-left text-xs border-collapse min-w-[1250px] print:min-w-full">
+              <table className="color-table entry-table w-full text-left text-xs border-collapse min-w-[1150px] print:min-w-full">
                 <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase">
                   <tr>
                     <th className="p-2 border-r text-center w-12">SL. NO.</th>
                     <th className="p-2 border-r w-36">Machine Name</th>
-                    <th className="p-2 border-r w-28">Section</th>
                     <th className="p-2 border-r w-24">Shift</th>
                     <th className="p-2 border-r w-48">Break Down Details</th>
                     <th className="p-2 border-r w-44">Root Cause</th>
@@ -339,7 +352,6 @@ export default function App() {
                           className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 outline-none"
                         />
                       </td>
-                      <td className="p-2 border-r"><input type="text" aria-label={`Section row ${idx + 1}`} placeholder="Section..." value={row.section || ''} onChange={e => handleRowChange(idx, 'section', e.target.value)} className="w-full border rounded px-2 py-1 text-xs outline-none" /></td>
                       <td className="p-2 border-r text-center">
                         <button
                           type="button"
@@ -431,7 +443,7 @@ export default function App() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-slate-100 font-bold text-slate-800 border-t-2 border-slate-300">
-                    <td colSpan={9} className="p-3 text-right pr-4 text-sm">Total</td>
+                    <td colSpan={8} className="p-3 text-right pr-4 text-sm">Total</td>
                     <td className="p-3 text-center border-x text-sm text-blue-700 bg-blue-50">{totalDownTime}</td>
                     <td className="p-3 text-center border-r text-sm text-blue-700 bg-blue-50">{totalManPower}</td>
                     <td colSpan={2}></td>
@@ -458,7 +470,7 @@ export default function App() {
               </button>
             </div>
             </fieldset>
-            <TenDayBreakdownChart />
+            <TenDayBreakdownChart onSelectDate={openChartDate} disabled={saving} />
           </form>
         )}
 
@@ -526,7 +538,7 @@ export default function App() {
                     <div className="space-y-4">
                       <div className="flex flex-wrap justify-between items-center gap-3 rounded-xl bg-white/80 border border-violet-200 p-3">
                         <h3 className="font-bold text-violet-900">Reports for {selectedDateGroup.date}</h3>
-                        <button type="button" onClick={() => setOpenHistoryDate(null)} className="flex items-center gap-1 text-xs font-bold text-fuchsia-700 print:hidden"><ArrowLeft size={14} /> All dates</button>
+                        <button type="button" onClick={() => { setFilterDate(''); setOpenHistoryDate(null); }} className="flex items-center gap-1 text-xs font-bold text-fuchsia-700 print:hidden"><ArrowLeft size={14} /> All dates</button>
                       </div>
                       {selectedDateGroup.reports.map((report, rIdx) => (
                         <article key={report._id || rIdx} className="rounded-xl overflow-hidden border border-sky-200 shadow-sm bg-white page-break-inside-avoid">

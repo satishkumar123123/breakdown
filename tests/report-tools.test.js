@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyseEntries, filterReports, downtime, readDraft, writeDraft, DRAFT_KEY, EDIT_DRAFT_KEY, lastTenDays } from '../frontend/src/reportTools.js';
+import { analyseEntries, filterReports, downtime, readDraft, writeDraft, DRAFT_KEY, EDIT_DRAFT_KEY, lastTenDays, projectHomeUrl } from '../frontend/src/reportTools.js';
 
 const entries = [
   { machineName: 'Pump', section: 'SMS', shift: 'D', downTimeHours: 2, manpowerUsed: 3 },
@@ -11,6 +11,15 @@ const reports = [
   { _id: '1', reportDate: '2026-10-10', shift: 'D / N', entries, totalDownTime: 7 },
   { _id: '2', reportDate: '2026-10-09', shift: 'N', entries: [{ machineName: 'Pump', downTimeHours: 3 }] }
 ];
+
+test('project QR URL uses current app origin and strips paths, queries and fragments', () => {
+  assert.equal(projectHomeUrl('https://breakdown-rho.vercel.app/?date=2026-10-12#history'), 'https://breakdown-rho.vercel.app/');
+  assert.equal(projectHomeUrl('https://another-app.example/reports?token=private'), 'https://another-app.example/');
+  assert.equal(projectHomeUrl('http://localhost:5173/history'), 'http://localhost:5173/');
+  assert.equal(projectHomeUrl('file:///tmp/index.html'), '');
+  assert.equal(projectHomeUrl('javascript:alert(1)'), '');
+  assert.equal(projectHomeUrl('invalid'), '');
+});
 
 test('last ten days count entries across reports, include gaps and exclude older/future dates', () => {
   const days = lastTenDays([
