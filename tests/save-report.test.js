@@ -70,13 +70,22 @@ test('submit waits for DB, persists fields, and date-filtered history returns re
 
   const reports = [];
   const Model = mongoose.model('BreakdownReport');
+  const Archive = mongoose.model('MonthArchive');
+  const archives = new Map();
+  t.mock.method(Archive, 'exists', async filter => archives.has(filter._id));
+  t.mock.method(Archive, 'find', () => ({ lean: async () => [...archives.values()] }));
+  t.mock.method(Archive, 'findOneAndUpdate', async (filter, update) => {
+    if (!archives.has(filter._id)) archives.set(filter._id, { _id: filter._id, ...update.$setOnInsert });
+    return archives.get(filter._id);
+  });
+  t.mock.method(Model, 'findById', id => ({ lean: async () => reports.find(report => String(report._id) === id) || null }));
   t.mock.method(Model.prototype, 'save', async function () {
     const report = this.toObject();
     reports.push(report);
     return this;
   });
   t.mock.method(Model, 'find', filter => ({ sort: () => ({ lean: async () =>
-    reports.filter(report => !filter.reportDate || report.reportDate === filter.reportDate)
+    reports.filter(report => !filter.$or || report.entries.some(entry => (entry.entryDate || report.reportDate) === filter.$or[0]['entries.entryDate']))
   }) }));
   const response = await post(payload);
   assert.equal(response.status, 201);
@@ -102,7 +111,8 @@ test('submit waits for DB, persists fields, and date-filtered history returns re
     reports[index] = { ...reports[index], ...update.$set, updatedAt: '2026-10-10T13:00:00.000Z' };
     return reports[index];
   });
-  t.mock.method(Model, 'exists', async filter => reports.some(report => String(report._id) === filter._id));
+  t.mock.method(Model, 'exists', async filter => reports.some(report => filter.reportDate
+    ? new RegExp(filter.reportDate.$regex).test(report.reportDate) : String(report._id) === filter._id));
   const edit = (id, body) => fetch(`${url}/api/reports/${id}`, {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
   });
@@ -124,4 +134,28 @@ test('submit waits for DB, persists fields, and date-filtered history returns re
   assert.equal((await edit('bad-id', editedPayload)).status, 400);
   assert.equal((await edit('000000000000000000000000', editedPayload)).status, 404);
   assert.equal((await fetch(`${url}/api/health`)).status, 200);
+
+  const multiDate = { ...payload, reportDate: '2026-10-22', entries: [
+    { machineName: 'Pump', entryDate: '2026-10-21', shift: 'D', downTimeHours: 1 },
+    { machineName: 'Motor', entryDate: '2026-10-22', shift: 'N', downTimeHours: 2 }
+  ] };
+  assert.equal((await post(multiDate)).status, 201);
+  assert.equal((await (await fetch(`${url}/api/reports?date=2026-10-21`)).json()).length, 1);
+  assert.equal((await post({ ...multiDate, entries: [{ ...multiDate.entries[0], entryDate: '2026-11-01' }] })).status, 400);
+  assert.equal((await post({ ...multiDate, entries: [{ ...multiDate.entries[0], entryDate: '2026-10-32' }] })).status, 400);
+  const archive = month => fetch(`${url}/api/report-months/${month}/archive`, { method: 'POST' });
+  assert.equal((await archive('2026-13')).status, 400);
+  assert.equal((await archive('2026-11')).status, 400);
+  const closed = await (await archive('2026-10')).json();
+  assert.equal(closed.month, '2026-10');
+  assert.equal((await (await archive('2026-10')).json()).archivedAt, closed.archivedAt);
+  const monthly = await (await fetch(`${url}/api/reports?view=monthly`)).json();
+  assert.deepEqual(monthly.archivedMonths, ['2026-10']);
+  assert.equal(monthly.reports.length, 2, 'archiving never removes or duplicates reports');
+  assert.equal((await post(multiDate)).status, 409, 'closed months reject additional submissions');
+  assert.equal((await post({ ...payload, reportDate: '2026-11-01' })).status, 201, 'next month remains open');
+  assert.equal((await edit(saved._id, { ...editedPayload, reportDate: '2026-11-01', expectedUpdatedAt: '2026-10-10T13:00:00.000Z' })).status, 400, 'editing cannot move an archived record to another month');
+  assert.equal((await edit(saved._id, { ...editedPayload, expectedUpdatedAt: '2026-10-10T13:00:00.000Z' })).status, 200, 'archived reports can still be corrected within their month');
+  assert.equal(reports.length, 3);
 });
+

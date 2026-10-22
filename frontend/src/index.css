@@ -185,3 +185,29 @@ button:focus-visible, select:focus-visible { outline: 2px solid #2563eb; outline
 }
 
 .color-table :is(thead th, tbody td):nth-child(13) { --cell-bg: #fce7f3; --head-bg: #fbcfe8; --cell-text: #9d174d; }
+
+.action-button { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.65rem 0.9rem; border-radius: 0.65rem; font-size: 0.75rem; font-weight: 750; }
+.action-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.history-filter { padding: 0.6rem; border: 1px solid #ddd6fe; border-radius: 0.65rem; color: #5b21b6; background: white; font-size: 0.75rem; min-width: 0; }
+.row-status { border-radius: 0.4rem; padding: 0.2rem 0.4rem; font-size: 0.65rem; font-weight: 800; }
+.saved-status { background: #d1fae5; color: #065f46; }
+.draft-status { background: #fef3c7; color: #92400e; }
+.monthly-table thead th { white-space: nowrap; }
+.monthly-table .highlight-date td { box-shadow: inset 0 2px #8b5cf6, inset 0 -2px #8b5cf6; }
+.monthly-table :is(thead th, tbody td):nth-child(2) { --cell-bg: #ccfbf1; --head-bg: #99f6e4; --cell-text: #115e59; }
+@media (max-width: 640px) {
+  .monthly-toolbar { display: flex; }
+  .monthly-toolbar nav { display: flex; flex: 1; gap: 0.5rem; }
+  .monthly-toolbar .project-qr-block { flex: 0 0 auto; padding-inline: 0.8rem; }
+  .monthly-toolbar .page-block { min-height: 2.8rem; }
+  .history-filter { max-width: 100%; }
+}
+@media print {
+  @page { size: landscape; margin: 8mm; }
+  .monthly-table-scroll { overflow: visible; }
+  .monthly-table { min-width: 0 !important; width: 100%; table-layout: fixed; font-size: 7px; }
+  .monthly-table :is(th, td) { padding: 3px; min-width: 0 !important; overflow-wrap: anywhere; }
+  .monthly-table thead th { white-space: normal; }
+  .monthly-table :is(input, textarea) { min-width: 0; width: 100%; padding: 0; font-size: 7px; border: 0; background: transparent; }
+}
+

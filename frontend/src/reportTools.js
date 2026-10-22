@@ -48,9 +48,10 @@ export function writeDraft(storage, key, draft) {
 
 export function filterReports(reports, { date = '', machine = '', section = '', shift = '' } = {}) {
   const query = machine.trim().toLowerCase();
-  return reports.filter(report => !date || report.reportDate === date).map(report => ({
+  return reports.map(report => ({
     ...report,
     entries: (report.entries || []).filter(entry =>
+      (!date || (entry.entryDate || report.reportDate) === date) &&
       (!query || String(entry.machineName || '').toLowerCase().includes(query)) &&
       (!section || String(entry.section || '').trim() === section) &&
       (!shift || (entry.shift || report.shift) === shift)
@@ -89,8 +90,12 @@ export function lastTenDays(reports, endDate = today()) {
   });
   const byDate = new Map(days.map(day => [day.date, day]));
   reports.forEach(report => {
-    const day = byDate.get(report.reportDate);
-    if (day && Array.isArray(report.entries)) day.count += report.entries.length;
+    if (!Array.isArray(report.entries)) return;
+    report.entries.forEach(entry => {
+      const day = byDate.get(entry.entryDate || report.reportDate);
+      if (day) day.count++;
+    });
   });
   return days;
 }
+

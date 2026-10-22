@@ -5,7 +5,7 @@ import { lastTenDays, today } from './reportTools.js';
 
 const COLORS = ['#2563eb', '#7c3aed', '#db2777', '#e11d48', '#ea580c', '#ca8a04', '#16a34a', '#0d9488', '#0891b2', '#4f46e5'];
 
-export default function TenDayBreakdownChart({ onSelectDate, disabled = false }) {
+export default function TenDayBreakdownChart({ onSelectDate, disabled = false, records: suppliedRecords, onRefresh }) {
   const [mode, setMode] = useState('bar');
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14,6 +14,7 @@ export default function TenDayBreakdownChart({ onSelectDate, disabled = false })
   const endDate = today();
 
   useEffect(() => {
+    if (suppliedRecords) { setLoading(false); setError(''); return; }
     let active = true;
     setLoading(true);
     setError('');
@@ -26,9 +27,9 @@ export default function TenDayBreakdownChart({ onSelectDate, disabled = false })
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [refresh, endDate]);
+  }, [refresh, endDate, suppliedRecords]);
 
-  const days = lastTenDays(records, endDate);
+  const days = lastTenDays(suppliedRecords || records, endDate);
   const total = days.reduce((sum, day) => sum + day.count, 0);
   const step = Math.max(1, Math.ceil(Math.max(...days.map(day => day.count)) / 4));
   const maximum = step * 4;
@@ -47,7 +48,7 @@ export default function TenDayBreakdownChart({ onSelectDate, disabled = false })
         <div role="group" aria-label="Choose breakdown chart type" className="flex gap-1 p-1 bg-white rounded-xl border border-violet-200">
           {[['bar', 'Bar Graph', BarChart3], ['line', 'Line Graph', LineChart]].map(([value, label, Icon]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition ${mode === value ? 'bg-violet-700 text-white shadow-sm' : 'text-violet-700 hover:bg-violet-50'}`}><Icon size={15} />{label}</button>)}
         </div>
-        <button type="button" aria-label="Refresh last 10 days chart" disabled={loading} onClick={() => setRefresh(value => value + 1)} className="p-2.5 rounded-lg bg-white border border-violet-200 text-violet-700 disabled:opacity-50"><RefreshCw size={16} /></button>
+        <button type="button" aria-label="Refresh last 10 days chart" disabled={loading || disabled} onClick={() => onRefresh ? onRefresh() : setRefresh(value => value + 1)} className="p-2.5 rounded-lg bg-white border border-violet-200 text-violet-700 disabled:opacity-50"><RefreshCw size={16} /></button>
       </div>
     </div>
     {loading ? <p role="status" className="py-14 text-center text-sm text-violet-700">Loading breakdown chart...</p> : error ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><p>Chart load nahi hua: {error}</p><button type="button" onClick={() => setRefresh(value => value + 1)} className="mt-2 font-bold underline">Retry chart</button></div> : <>
@@ -55,7 +56,7 @@ export default function TenDayBreakdownChart({ onSelectDate, disabled = false })
         <span className="rounded-lg bg-violet-100 text-violet-900 px-3 py-1.5">10-day total: {total} breakdowns</span>
         <span className="text-slate-600">Today included • zero-count dates also shown</span>
       </div>
-      <p className="text-xs text-violet-700 mb-3">Kisi bar ya date par click karke us din ki History details dekhein.</p>
+      <p className="text-xs text-violet-700 mb-3">Kisi bar ya date par click karke us month ki entries dekhein.</p>
       <div className="overflow-x-auto rounded-xl border border-white bg-white/80">
         <svg viewBox="0 0 960 292" role="group" aria-label={`${mode === 'bar' ? 'Bar' : 'Line'} graph of last 10 days. ${summary}`} className="w-full min-w-[700px]">
           <text x={left} y="18" fill="#64748b" fontSize="11" fontWeight="600">Number of breakdowns</text>
@@ -78,3 +79,4 @@ export default function TenDayBreakdownChart({ onSelectDate, disabled = false })
     </>}
   </section>;
 }
+

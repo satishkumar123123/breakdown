@@ -1,609 +1,343 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import {
-  Plus,
-  Trash2,
-  Download,
-  Printer,
-  History,
-  CheckCircle2,
-  RefreshCw,
-  CalendarDays,
-  ChevronRight,
-  ArrowLeft,
-  Pencil
-} from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Plus, Trash2, Download, Printer, History, CheckCircle2, RefreshCw, CalendarDays, Pencil, Archive, ArrowLeft } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { requestApi } from './api.js';
 import { SummaryCards, MachineAnalysis } from './ReportInsights.jsx';
 import TenDayBreakdownChart from './TenDayBreakdownChart.jsx';
 import ProjectQrBlock from './ProjectQrBlock.jsx';
-import { DRAFT_KEY, EDIT_DRAFT_KEY, today, emptyRow, downtime, normaliseRows, readDraft, writeDraft, filterReports } from './reportTools.js';
+import { EDIT_DRAFT_KEY, today, downtime, normaliseRows } from './reportTools.js';
+import { currentMonth, monthLabel, monthEnd, monthDraftKey, newMonthRow, rowHasData, readMonthDraft, savedRows, newestFirst, monthGroups } from './monthlyReports.js';
 
-const loadInitialForm = () => {
-  try {
-    const draft = readDraft(window.localStorage, EDIT_DRAFT_KEY) || readDraft(window.localStorage, DRAFT_KEY);
-    if (draft) return { ...draft, restored: true };
-  } catch { return { reportDate: today(), rows: [emptyRow()], storageError: true }; }
-  return { reportDate: today(), rows: [emptyRow()] };
-};
+function loadForm(month, onlyNew = false) {
+  try { return { month, ...readMonthDraft(window.localStorage, month, onlyNew), storageError: false }; }
+  catch { return { month, rows: [], editingReport: null, storageError: true }; }
+}
+
+const headers = ['SL. NO.', 'Date', 'Machine Name', 'Shift', 'Break Down Details', 'Root Cause',
+  'Corrective Action', 'Start Time', 'End Time', 'Down Time (Hrs)', 'Man Power', 'Spares Used'];
+
+function BreakdownTable({ rows, month, busy, onChange, onRemove, onEdit, onDelete, highlightDate, emptyMessage = 'Is month mein abhi koi breakdown nahi hai. Add Breakdown Row se entry shuru karein.' }) {
+  const hours = rows.reduce((sum, row) => sum + (Number(row.downTimeHours) || 0), 0);
+  const manpower = rows.reduce((sum, row) => sum + (Number(row.manpowerUsed) || 0), 0);
+  const input = (row, field, type = 'text') => <input
+    type={type} required={field === 'machineName' || field === 'entryDate'}
+    aria-label={field === 'entryDate' ? 'Breakdown date' : field === 'machineName' ? 'Machine name' : field === 'manpowerUsed' ? 'Manpower' : field === 'startTime' ? 'Start time' : field === 'endTime' ? 'End time' : 'Spares used'}
+    value={row[field] ?? ''} disabled={busy}
+    min={type === 'date' ? month + '-01' : type === 'number' ? 0 : undefined}
+    max={type === 'date' ? monthEnd(month) : undefined}
+    onChange={event => onChange(row.id, field, event.target.value)}
+    className="w-full rounded px-2 py-2 text-xs border"
+  />;
+  const area = (row, field, label) => row.draft
+    ? <textarea aria-label={label} rows={2} value={row[field] || ''} disabled={busy} onChange={event => onChange(row.id, field, event.target.value)} className="w-full rounded px-2 py-2 text-xs border resize-y" />
+    : <span className="whitespace-pre-wrap break-words">{row[field] || '-'}</span>;
+  return <div className="overflow-x-auto rounded-xl border border-slate-200 monthly-table-scroll">
+    <table className="color-table monthly-table w-full text-left text-xs border-collapse min-w-[1400px]">
+      <thead><tr>{headers.map(title => <th key={title} className="p-3">{title}</th>)}<th className="p-3 print:hidden">Status / Action</th></tr></thead>
+      <tbody>
+        {rows.map((row, index) => <tr key={row.key} data-entry-date={row.entryDate} className={highlightDate === row.entryDate ? 'highlight-date' : ''}>
+          <td className="p-2 text-center font-bold">{index + 1}</td>
+          <td className="p-2 min-w-[142px] font-bold">{row.draft ? input(row, 'entryDate', 'date') : row.entryDate}</td>
+          <td className="p-2 min-w-[150px] font-semibold">{row.draft ? input(row, 'machineName') : row.machineName}</td>
+          <td className="p-2 text-center">
+            {row.draft ? <button type="button" role="switch" aria-label="Night shift" aria-checked={row.shift === 'N'} disabled={busy} onClick={() => onChange(row.id, 'shift', row.shift === 'N' ? 'D' : 'N')} className={'shift-toggle ' + (row.shift === 'N' ? 'shift-night' : 'shift-day')}>{row.shift}</button> : <strong>{row.shift || '-'}</strong>}
+          </td>
+          <td className="p-2 min-w-[170px]">{area(row, 'breakdownDetails', 'Breakdown details')}</td>
+          <td className="p-2 min-w-[150px]">{area(row, 'rootCause', 'Root cause')}</td>
+          <td className="p-2 min-w-[170px]">{area(row, 'correctiveAction', 'Corrective action')}</td>
+          <td className="p-2">{row.draft ? input(row, 'startTime', 'time') : row.startTime || '-'}</td>
+          <td className="p-2">{row.draft ? input(row, 'endTime', 'time') : row.endTime || '-'}</td>
+          <td className="p-2 text-center font-bold">{Number(row.downTimeHours || 0).toFixed(2)}</td>
+          <td className="p-2 min-w-[80px]">{row.draft ? input(row, 'manpowerUsed', 'number') : row.manpowerUsed || 0}</td>
+          <td className="p-2 min-w-[120px]">{row.draft ? input(row, 'sparesUsed') : row.sparesUsed || '-'}</td>
+          <td className="p-2 min-w-[145px] print:hidden">
+            {row.draft ? <div className="flex items-center justify-between gap-2"><span className="row-status draft-status">Unsaved</span><button type="button" disabled={busy} aria-label="Remove draft row" onClick={() => onRemove(row.id)} className="p-2 text-rose-700"><Trash2 size={16} /></button></div>
+              : <div className="flex flex-wrap gap-1 items-center"><span className="row-status saved-status">Saved</span><button type="button" disabled={busy} onClick={() => onEdit(row.reportId)} title="Edit all rows in this saved report" aria-label={'Edit report for ' + row.entryDate} className="p-2 text-violet-800"><Pencil size={15} /></button><button type="button" disabled={busy} onClick={() => onDelete(row.reportId)} title="Delete this entire saved report" aria-label={'Delete report for ' + row.entryDate} className="p-2 text-rose-700"><Trash2 size={15} /></button></div>}
+          </td>
+        </tr>)}
+        {!rows.length && <tr><td colSpan={13} className="p-10 text-center">{emptyMessage}</td></tr>}
+      </tbody>
+      <tfoot><tr className="bg-slate-100 font-bold"><td colSpan={9} className="p-3 text-right">Total</td><td className="p-3 text-center">{hours.toFixed(2)}</td><td className="p-3">{manpower}</td><td /><td className="print:hidden" /></tr></tfoot>
+    </table>
+  </div>;
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('entry'); // 'entry' ya 'history'
-  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState(() => loadForm(currentMonth()));
+  const { month, rows, editingReport } = form;
+  const [calendarDate, setCalendarDate] = useState(today);
+  const previousCalendarMonth = useRef(calendarDate.slice(0, 7));
+  const [activeTab, setActiveTab] = useState('entry');
+  const [workspace, setWorkspace] = useState({ reports: [], archivedMonths: [] });
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [storageError, setStorageError] = useState(form.storageError);
   const [error, setError] = useState('');
-  const [initialForm] = useState(loadInitialForm);
-  const [reportDate, setReportDate] = useState(initialForm.reportDate);
-  const [rows, setRows] = useState(initialForm.rows);
-  const [editingReport, setEditingReport] = useState(initialForm.editingReport || null);
-  const [draftStatus, setDraftStatus] = useState(initialForm.restored ? 'Draft restored — aap wahi se continue kar sakte hain.' : '');
-  const [storageError, setStorageError] = useState(initialForm.storageError || false);
   const [notice, setNotice] = useState('');
-
-  useEffect(() => {
-    try {
-      writeDraft(window.localStorage, editingReport ? EDIT_DRAFT_KEY : DRAFT_KEY, { reportDate, rows, editingReport });
-      setStorageError(false);
-      setDraftStatus(initialForm.restored ? 'Draft restored • changes auto-saved on this device' : 'Draft auto-saved on this device');
-    } catch { setStorageError(true); }
-  }, [reportDate, rows, editingReport, initialForm.restored]);
-
-  const [historyRecords, setHistoryRecords] = useState([]);
-  const [filterDate, setFilterDate] = useState('');
+  const [historyMonth, setHistoryMonth] = useState('');
   const [filterMachine, setFilterMachine] = useState('');
-  const [filterSection, setFilterSection] = useState('');
-  const sectionOptions = [...new Set(historyRecords.flatMap(report => (report.entries || []).map(entry => String(entry.section || '').trim())).filter(Boolean))].sort();
   const [filterShift, setFilterShift] = useState('');
-  const filteredRecords = useMemo(() => filterReports(historyRecords, { date: filterDate, machine: filterMachine, section: filterSection, shift: filterShift }), [historyRecords, filterDate, filterMachine, filterSection, filterShift]);
-  const [openHistoryDate, setOpenHistoryDate] = useState(null);
-  const dateGroups = useMemo(() => {
-    const grouped = new Map();
-    filteredRecords.forEach(report => {
-      const date = report.reportDate;
-      if (!grouped.has(date)) grouped.set(date, []);
-      grouped.get(date).push(report);
-    });
-    return [...grouped].sort(([a], [b]) => b.localeCompare(a)).map(([date, reports]) => ({
-      date, reports,
-      downtime: reports.reduce((sum, report) => sum + (Number(report.totalDownTime) || 0), 0),
-      entries: reports.reduce((sum, report) => sum + (report.entries?.length || 0), 0)
-    }));
-  }, [filteredRecords]);
-  const selectedDateGroup = dateGroups.find(group => group.date === openHistoryDate);
-  const insightReports = selectedDateGroup?.reports || filteredRecords;
-  const insightEntries = insightReports.flatMap(report => (report.entries || []).map(entry => ({ ...entry, shift: entry.shift || report.shift })));
-  const insightLabel = `${selectedDateGroup?.date || filterDate || 'All dates'} • saved reports${filterMachine || filterSection || filterShift ? ' • filtered results' : ''}`;
+  const [filterDate, setFilterDate] = useState('');
+  const [highlightDate, setHighlightDate] = useState('');
+  const requestNumber = useRef(0);
+  const mutationInProgress = useRef(false);
+  const busy = saving || archiving;
+  const archived = workspace.archivedMonths.includes(month);
 
-
-  // Breakdown Reports Fetch Logic
-  const fetchHistory = async () => {
+  const refreshWorkspace = useCallback(async () => {
+    const requestId = ++requestNumber.current;
+    setLoading(true);
     try {
-      setLoading(true);
-      setError('');
-      const data = await requestApi('/reports');
-      setHistoryRecords(data);
+      const data = await requestApi('/reports?view=monthly');
+      if (!Array.isArray(data?.reports) || !Array.isArray(data?.archivedMonths)) {
+        throw new Error('Monthly reporting API available nahi hai. Updated backend deploy karke refresh karein.');
+      }
+      if (requestId === requestNumber.current) { setWorkspace(data); setLoaded(true); setError(''); }
+      return true;
     } catch (err) {
-      setError(err.message);
+      if (requestId === requestNumber.current) setError(err.message);
+      return false;
     } finally {
-      setLoading(false);
+      if (requestId === requestNumber.current) setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => { refreshWorkspace(); return () => { requestNumber.current++; }; }, [refreshWorkspace]);
+  useEffect(() => {
+    // Preserve a damaged/unreadable draft instead of overwriting it with an empty form.
+    if (form.storageError) { setStorageError(true); return; }
+    try {
+      window.localStorage.setItem(monthDraftKey(month, Boolean(editingReport)), JSON.stringify({ version: 2, rows, editingReport }));
+      setStorageError(false);
+    } catch { setStorageError(true); }
+  }, [month, rows, editingReport, form.storageError]);
 
   useEffect(() => {
-    if (activeTab === 'history') {
-      fetchHistory();
-    }
-  }, [activeTab]);
+    const timer = window.setInterval(() => setCalendarDate(today()), 60000);
+    const onFocus = () => { setCalendarDate(today()); if (!mutationInProgress.current) refreshWorkspace(); };
+    window.addEventListener('focus', onFocus);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', onFocus); };
+  }, [refreshWorkspace]);
 
-  const openChartDate = (date) => {
-    setFilterDate(date);
-    setOpenHistoryDate(date);
-    setFilterMachine('');
-    setFilterSection('');
-    setFilterShift('');
-    setError('');
-    setLoading(true);
-    setActiveTab('history');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+  useEffect(() => {
+    const next = calendarDate.slice(0, 7);
+    if (next === previousCalendarMonth.current || busy) return;
+    const previous = previousCalendarMonth.current;
+    previousCalendarMonth.current = next;
+    if (month === previous) { setForm(loadForm(next)); setHighlightDate(''); }
+  }, [calendarDate, busy, month]);
+
+  const changeMonth = next => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(next) || busy) return;
+    setForm(loadForm(next)); setError(''); setHighlightDate('');
   };
 
-  const handleRowChange = (index, field, value) => {
-    setRows(current => current.map((row, rowIndex) => {
-      if (rowIndex !== index) return row;
-      const updated = { ...row, [field]: value };
-      if (field === 'startTime' || field === 'endTime') updated.downTimeHours = downtime(updated.startTime, updated.endTime);
-      return updated;
-    }));
-  };
+  const allGroups = useMemo(() => monthGroups(workspace.reports), [workspace.reports]);
+  const openMonths = allGroups.filter(group => !workspace.archivedMonths.includes(group.month));
+  const historyGroups = allGroups.filter(group => workspace.archivedMonths.includes(group.month));
+  const savedMonthRows = savedRows(workspace.reports.filter(report => report.reportDate.slice(0, 7) === month));
+  const displayRows = newestFirst([
+    ...((!archived || editingReport) ? savedMonthRows.filter(row => row.reportId !== editingReport?._id) : []),
+    ...rows.map((row, index) => ({ ...row, draft: true, key: 'draft:' + row.id, rowIndex: index }))
+  ]);
+  const historyRows = (historyGroups.find(group => group.month === historyMonth)?.rows || []).filter(row =>
+    (!filterMachine || String(row.machineName || '').toLowerCase().includes(filterMachine.trim().toLowerCase())) &&
+    (!filterShift || row.shift === filterShift) && (!filterDate || row.entryDate === filterDate)
+  );
 
-  const addRow = () => setRows(current => [...current, emptyRow()]);
+  const changeRow = (id, field, value) => setForm(current => ({ ...current, rows: current.rows.map(row => {
+    if (row.id !== id) return row;
+    const updated = { ...row, [field]: value };
+    if (field === 'startTime' || field === 'endTime') updated.downTimeHours = downtime(updated.startTime, updated.endTime);
+    return updated;
+  }) }));
 
-  const restoreNewDraft = () => {
-    let draft;
-    try { draft = readDraft(window.localStorage, DRAFT_KEY); } catch { setStorageError(true); }
-    setEditingReport(null);
-    setReportDate(draft?.reportDate || today());
-    setRows(draft?.rows || [emptyRow()]);
-    setError('');
+  const clearEditDraft = () => {
+    try {
+      window.localStorage.removeItem(monthDraftKey(month, true));
+      const legacy = window.localStorage.getItem(EDIT_DRAFT_KEY);
+      if (legacy && JSON.parse(legacy).reportDate?.slice(0, 7) === month) window.localStorage.removeItem(EDIT_DRAFT_KEY);
+    } catch { setStorageError(true); }
   };
 
   const cancelEdit = () => {
-    if (!window.confirm('Editing changes discard karke new report draft par wapas jayein?')) return;
-    try { window.localStorage.removeItem(EDIT_DRAFT_KEY); } catch { setStorageError(true); }
-    restoreNewDraft();
+    if (!window.confirm('Editing changes discard karke new entries par wapas jayein?')) return;
+    clearEditDraft(); setForm(loadForm(month, true)); setError('');
   };
 
-  const handleEditReport = (reportId) => {
-    const report = historyRecords.find(item => item._id === reportId);
+  const editReport = reportId => {
+    const report = workspace.reports.find(item => item._id === reportId);
     if (!report) return;
+    const reportMonth = report.reportDate.slice(0, 7);
     if (editingReport?._id === reportId) { setActiveTab('entry'); return; }
-    if (editingReport && editingReport._id !== reportId && !window.confirm('Current edit draft replace karna hai?')) return;
-    setEditingReport({ _id: report._id, updatedAt: report.updatedAt });
-    setReportDate(report.reportDate);
-    setRows(normaliseRows(report.entries || [], report.shift));
-    setError('');
-    setNotice('Existing report edit ho rahi hai. Update Report se changes save karein.');
-    setActiveTab('entry');
+    // New-entry drafts stay under their own month key while a report is edited.
+    let otherEdit;
+    try { otherEdit = readMonthDraft(window.localStorage, reportMonth).editingReport; } catch { setStorageError(true); }
+    if (otherEdit && otherEdit._id !== reportId && !window.confirm('Is month ka existing edit draft replace karein?')) return;
+    setForm({ month: reportMonth, rows: normaliseRows(report.entries || [], report.shift).map(row => ({ ...row, entryDate: row.entryDate || report.reportDate })),
+      editingReport: { _id: report._id, updatedAt: report.updatedAt }, storageError: false });
+    setActiveTab('entry'); setError(''); setHighlightDate('');
+    setNotice('Saved report edit ho rahi hai. Update Report se isi record mein changes save honge.');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const removeRow = (index) => {
-    if (rows.length === 1) return;
-    setRows(rows.filter((_, i) => i !== index));
-  };
-
-  const totalDownTime = rows.reduce((sum, r) => sum + (Number(r.downTimeHours) || 0), 0).toFixed(2);
-  const totalManPower = rows.reduce((sum, r) => sum + (Number(r.manpowerUsed) || 0), 0);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (saving) return;
-    if (!rows.length || rows.some(row => !row.machineName.trim())) {
-      setError('Har breakdown row me machine name zaroori hai.');
-      return;
+  const saveEntries = async event => {
+    event.preventDefault();
+    if (mutationInProgress.current || !loaded || (archived && !editingReport)) return;
+    if (!rows.length || rows.some(row => !String(row.machineName || '').trim() || !row.entryDate || row.entryDate.slice(0, 7) !== month)) {
+      setError('Har draft row mein isi month ki date aur machine name bharein. Khali rows remove karein.'); return;
     }
-    setSaving(true);
-    setError('');
-    const payload = {
-      reportDate,
-      shift: [...new Set(rows.map(row => row.shift))].join(' / '),
-      entries: rows,
-      totalDownTime: Number(totalDownTime),
-      totalManPower: Number(totalManPower),
-      expectedUpdatedAt: editingReport?.updatedAt
-    };
-
+    mutationInProgress.current = true;
+    requestNumber.current++;
+    setLoading(false); setSaving(true); setError('');
+    const wasEditing = Boolean(editingReport);
+    const wasArchived = archived;
     try {
-      const data = await requestApi(editingReport ? `/reports/${editingReport._id}` : '/reports', {
-        method: editingReport ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const data = await requestApi(editingReport ? '/reports/' + editingReport._id : '/reports', {
+        method: editingReport ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportDate: [...rows].map(row => row.entryDate).sort().at(-1),
+          shift: [...new Set(rows.map(row => row.shift))].join(' / '), entries: rows, expectedUpdatedAt: editingReport?.updatedAt })
       });
-      if (!data?._id) throw new Error('Server ne saved report confirm nahi ki. History check karein.');
-      setNotice(editingReport ? 'Report successfully updated!' : 'Report database me successfully save ho gaya!');
-      try { window.localStorage.removeItem(editingReport ? EDIT_DRAFT_KEY : DRAFT_KEY); } catch { setStorageError(true); }
-      if (editingReport) restoreNewDraft();
-      else setRows([emptyRow()]);
-      setHistoryRecords(current => [data, ...current.filter(report => report._id !== data._id)]);
-      setFilterMachine('');
-      setFilterSection('');
-      setFilterShift('');
-      setFilterDate('');
-      setOpenHistoryDate(reportDate);
-      setActiveTab('history');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
+      if (!data?._id) throw new Error('Save confirm nahi hua. Refresh karke saved rows check karein; draft safe hai.');
+      setWorkspace(current => ({ ...current, reports: [data, ...current.reports.filter(report => report._id !== data._id)] }));
+      if (wasEditing) { clearEditDraft(); setForm(loadForm(month, true)); }
+      else setForm(current => ({ ...current, rows: [], editingReport: null }));
+      setNotice(wasEditing ? 'Report updated successfully.' : 'Daily entries saved. Yeh rows month close hone tak main page par rahengi.');
+      if (wasEditing && wasArchived) { setHistoryMonth(month); setActiveTab('history'); }
+      await refreshWorkspace();
+    } catch (err) { setError(err.message); }
+    finally { mutationInProgress.current = false; setSaving(false); }
   };
 
-  const handleDeleteReport = async (reportId) => {
-    if (!window.confirm('Kya aap is report record ko delete karna chahte hain?')) return;
+  const archiveMonth = async () => {
+    if (mutationInProgress.current || !loaded || archived) return;
+    if (editingReport || rows.some(rowHasData)) { setError('Month close karne se pehle unsaved entries save karein ya edit cancel karein.'); return; }
+    if (!window.confirm(monthLabel(month) + ' ke saare saved breakdowns month-wise History mein move karein?')) return;
+    mutationInProgress.current = true; requestNumber.current++;
+    setLoading(false); setArchiving(true); setError('');
     try {
-      await requestApi(`/reports/${reportId}`, { method: 'DELETE' });
-      setHistoryRecords(historyRecords.filter((r) => r._id !== reportId));
-      if (editingReport?._id === reportId) {
-        try { window.localStorage.removeItem(EDIT_DRAFT_KEY); } catch { setStorageError(true); }
-        restoreNewDraft();
-      }
-      setNotice('Report record deleted!');
-    } catch (err) {
-      alert('Delete error: ' + err.message);
-    }
+      const result = await requestApi('/report-months/' + month + '/archive', { method: 'POST' });
+      if (result.month !== month) throw new Error('Month save confirm nahi hua. Refresh karke check karein.');
+      setWorkspace(current => ({ ...current, archivedMonths: [...new Set([...current.archivedMonths, month])] }));
+      setForm(current => ({ ...current, rows: [], editingReport: null }));
+      setHistoryMonth(month); setFilterDate(''); setFilterMachine(''); setFilterShift(''); setActiveTab('history');
+      setNotice(monthLabel(month) + ' History mein save ho gaya. Naye month ki entries Main Page par save karein.');
+      await refreshWorkspace();
+    } catch (err) { setError(err.message); }
+    finally { mutationInProgress.current = false; setArchiving(false); }
   };
 
-  const exportToExcel = (entries, dateStr, shiftStr) => {
-    const formattedData = (entries || []).map((row, idx) => ({
-      'SL. NO.': idx + 1,
-      'DATE': dateStr,
-      'MACHINE NAME': row.machineName,
-      'SECTION': row.section || '',
-      'SHIFT': row.shift || shiftStr || '-',
-      'BREAK DOWN DETAILS': row.breakdownDetails,
-      'ROOT CAUSE': row.rootCause,
-      'CORECTIVE & PREVENTIVE ACTION': row.correctiveAction,
-      'START TIME': row.startTime,
-      'END TIME': row.endTime,
-      'DOWN TIME (HRS)': row.downTimeHours,
-      'MAN POWER USED': row.manpowerUsed,
-      'SPARES USED': row.sparesUsed
+  const deleteReport = async reportId => {
+    if (mutationInProgress.current) return;
+    const report = workspace.reports.find(item => item._id === reportId);
+    if (!window.confirm('Is saved report ki saari ' + (report?.entries?.length || 0) + ' breakdown rows delete karein?')) return;
+    mutationInProgress.current = true; requestNumber.current++;
+    setLoading(false); setSaving(true); setError('');
+    try {
+      await requestApi('/reports/' + reportId, { method: 'DELETE' });
+      setWorkspace(current => ({ ...current, reports: current.reports.filter(item => item._id !== reportId) }));
+      if (editingReport?._id === reportId) { clearEditDraft(); setForm(loadForm(month, true)); }
+      setNotice('Report deleted.'); await refreshWorkspace();
+    } catch (err) { setError(err.message); }
+    finally { mutationInProgress.current = false; setSaving(false); }
+  };
+
+  const exportRows = (entries, selectedMonth) => {
+    const data = entries.map((row, index) => ({
+      'SL. NO.': index + 1, 'DATE': row.entryDate, 'MACHINE NAME': row.machineName, 'SHIFT': row.shift,
+      'BREAK DOWN DETAILS': row.breakdownDetails, 'ROOT CAUSE': row.rootCause, 'CORRECTIVE ACTION': row.correctiveAction,
+      'START TIME': row.startTime, 'END TIME': row.endTime, 'DOWN TIME (HRS)': row.downTimeHours,
+      'MAN POWER': row.manpowerUsed, 'SPARES USED': row.sparesUsed, 'STATUS': row.draft ? 'Unsaved draft' : 'Saved'
     }));
-
-    const worksheet = XLSX.utils.json_to_sheet(formattedData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Breakdown_Report');
-    XLSX.writeFile(workbook, `Breakdown_Report_${dateStr}.xlsx`);
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(data), 'Monthly_Breakdowns');
+    XLSX.writeFile(book, 'Breakdown_Report_' + selectedMonth + '.xlsx');
   };
 
-  return (
-    <div className="portal-background min-h-screen text-slate-900 pb-16 font-sans">
-      <header className="brand-heading max-w-7xl mx-auto px-4 pt-8 sm:pt-10 pb-6 text-center">
-        <h1 className="brand-title">S G Green annovation</h1>
-        <p className="brand-subtitle mt-2">(breakdown report)</p>
-        <div className="brand-divider mx-auto mt-4" aria-hidden="true" />
-      </header>
+  const selectHistory = selected => { setHistoryMonth(selected); setFilterDate(''); setFilterMachine(''); setFilterShift(''); };
+  const openChartDate = date => {
+    const selected = date.slice(0, 7);
+    if (workspace.archivedMonths.includes(selected)) { selectHistory(selected); setFilterDate(date); setActiveTab('history'); }
+    else { changeMonth(selected); setHighlightDate(date); setActiveTab('entry'); }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const tableActions = { busy, onChange: changeRow, onRemove: id => setForm(current => ({ ...current, rows: current.rows.filter(row => row.id !== id) })), onEdit: editReport, onDelete: deleteReport };
 
-      <main className="max-w-7xl mx-auto px-4 print:m-0 print:p-0 print:max-w-full">
-        <div className="report-toolbar flex flex-wrap items-center gap-3 mb-5 p-3 sm:p-4 print:hidden">
-          <div className="date-control w-44 rounded-xl px-3 py-2">
-            <label htmlFor="toolbar-report-date" className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-teal-800 mb-1"><CalendarDays size={12} /> {activeTab === 'entry' ? 'Report Date' : 'History Date'}</label>
-            <input
-              id="toolbar-report-date"
-              aria-label={activeTab === 'entry' ? 'Report date' : 'Filter history by date'}
-              form={activeTab === 'entry' ? 'breakdown-report-form' : undefined}
-              disabled={saving}
-              type="date"
-              required={activeTab === 'entry'}
-              value={activeTab === 'entry' ? reportDate : filterDate}
-              onChange={e => {
-                if (activeTab === 'entry') setReportDate(e.target.value);
-                else { setFilterDate(e.target.value); setOpenHistoryDate(e.target.value || null); }
-              }}
-              className="w-full border border-teal-200 rounded-md px-2 py-1 text-xs text-teal-900 bg-white/90 focus:outline-none focus:ring-2 focus:ring-teal-400 font-semibold"
-            />
+  return <div className="portal-background min-h-screen text-slate-900 pb-16 font-sans">
+    <header className="brand-heading max-w-[1600px] mx-auto px-4 pt-8 pb-6 text-center">
+      <h1 className="brand-title">S G Green annovation</h1><p className="brand-subtitle mt-2">(breakdown report)</p><div className="brand-divider mx-auto mt-4" />
+    </header>
+    <main className="max-w-[1600px] mx-auto px-4 print:p-0">
+      <div className="report-toolbar monthly-toolbar flex flex-wrap items-center gap-3 mb-5 p-3 print:hidden">
+        <nav className="flex flex-wrap gap-3" aria-label="Report pages">
+          <button type="button" disabled={busy} aria-pressed={activeTab === 'entry'} onClick={() => { setActiveTab('entry'); setError(''); }} className={'page-block page-block-entry ' + (activeTab === 'entry' ? 'page-block-active' : '')}><CalendarDays size={18} /> Main Page</button>
+          <button type="button" disabled={busy} aria-pressed={activeTab === 'history'} onClick={() => { setActiveTab('history'); refreshWorkspace(); }} className={'page-block page-block-history ' + (activeTab === 'history' ? 'page-block-active' : '')}><History size={18} /> Monthly History</button>
+        </nav>
+        <ProjectQrBlock />
+        <button type="button" disabled={busy || loading} aria-label="Refresh saved breakdowns" onClick={refreshWorkspace} className="ml-auto rounded-lg border border-teal-200 bg-white p-3 text-teal-800"><RefreshCw size={18} /></button>
+      </div>
+      {notice && <div role="status" className="mb-4 rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-800 flex justify-between gap-3 print:hidden">{notice}<button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
+      {error && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}<button type="button" disabled={busy || loading} onClick={refreshWorkspace} className="ml-3 underline font-bold">Refresh</button></div>}
+      {loading && <p role="status" className="mb-4 text-sm text-teal-800">Loading saved breakdowns...</p>}
+      {activeTab === 'entry' ? <section className="entry-panel rounded-2xl p-4 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+          <div><h2 className="text-xl font-extrabold text-teal-900">{monthLabel(month)} · Breakdown Register</h2><p className="text-sm text-teal-700 mt-1">Daily save • newest dates first • {savedMonthRows.length} {archived ? 'breakdowns in History' : 'saved breakdowns'}</p></div>
+          <div className="flex flex-wrap items-center gap-2 print:hidden">
+            <label className="text-xs font-bold text-teal-800">Working month <input type="month" aria-label="Working month" value={month} disabled={busy} onChange={event => changeMonth(event.target.value)} className="ml-2 border border-teal-200 rounded-lg bg-teal-50 px-2 py-2" /></label>
+            {month !== calendarDate.slice(0, 7) && <button type="button" disabled={busy} onClick={() => changeMonth(calendarDate.slice(0, 7))} className="action-button bg-teal-100 text-teal-900">This month</button>}
+            <button type="button" onClick={() => exportRows(displayRows, month)} disabled={!displayRows.length} className="action-button bg-emerald-100 text-emerald-900"><Download size={16} /> Export Month</button>
+            <button type="button" onClick={() => window.print()} className="action-button bg-indigo-100 text-indigo-900"><Printer size={16} /> Print / PDF</button>
           </div>
-          <nav aria-label="Report pages" className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              disabled={saving}
-              aria-pressed={activeTab === 'entry'}
-              onClick={() => { setError(''); setActiveTab('entry'); }}
-              className={`page-block page-block-entry ${activeTab === 'entry' ? 'page-block-active' : ''}`}
-            >
-              <Plus size={18} /> {editingReport ? 'Edit Entry' : 'New Entry'}
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              aria-pressed={activeTab === 'history'}
-              onClick={() => { setOpenHistoryDate(null); setActiveTab('history'); }}
-              className={`page-block page-block-history ${activeTab === 'history' ? 'page-block-active' : ''}`}
-            >
-              <History size={18} /> History
-            </button>
-          </nav>
-          <ProjectQrBlock />
         </div>
-        {notice && <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 flex justify-between gap-3 print:hidden">{notice}<button type="button" aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
-        {error && (
-          <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {error}
+        {openMonths.some(group => group.month !== month) && <div className="flex flex-wrap items-center gap-2 mb-4 print:hidden"><span className="text-xs text-slate-600">Other open months:</span>{openMonths.filter(group => group.month !== month).map(group => <button key={group.month} type="button" disabled={busy} onClick={() => changeMonth(group.month)} className="rounded-full bg-amber-50 border border-amber-200 text-amber-900 px-3 py-1 text-xs font-bold">{monthLabel(group.month)} ({group.rows.length})</button>)}</div>}
+        {archived && <p className="mb-4 p-3 rounded-xl bg-violet-50 text-violet-900 text-sm">Yeh month History mein save ho chuka hai. {editingReport ? 'Existing report update kar sakte hain.' : 'Saved reports edit kar sakte hain; nayi entries ke liye doosra working month chunein.'}</p>}
+        {archived && !editingReport && <button type="button" onClick={() => { selectHistory(month); setActiveTab('history'); }} className="action-button bg-violet-100 text-violet-900 mb-4 print:hidden">Open this month in History</button>}
+        {archived && !editingReport && rows.some(rowHasData) && <p role="alert" className="mb-3 text-sm text-amber-900">Is device par unsaved draft bhi hai. Export Month se draft download kar sakte hain; yeh rows History mein save nahi hui hain.</p>}
+        {editingReport && <div className="flex flex-wrap items-center justify-between gap-3 mb-4 bg-violet-50 rounded-xl p-3"><p className="text-sm font-bold text-violet-900">Editing saved report · baaki saved rows bhi neeche dikhengi</p><button type="button" disabled={busy} onClick={cancelEdit} className="action-button bg-white text-rose-700 print:hidden">Cancel Edit</button></div>}
+        {storageError && <p role="alert" className="mb-3 text-sm text-rose-700">Draft auto-save unavailable. Tab close karne se pehle entries save ya export karein.</p>}
+        {highlightDate && <p className="mb-3 text-xs font-semibold text-violet-800">Chart se selected date: {highlightDate}. Matching rows highlighted hain.</p>}
+        <form onSubmit={saveEntries}>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4 print:hidden">
+            <div className="flex flex-wrap gap-2">
+              {(!archived || editingReport) && <button type="button" disabled={busy || !loaded} onClick={() => setForm(current => ({ ...current, rows: [newMonthRow(month), ...current.rows] }))} className="action-button bg-teal-700 text-white"><Plus size={16} /> Add Breakdown Row</button>}
+              {(!archived || editingReport) && <button type="submit" disabled={busy || !loaded || !rows.length} className="action-button bg-blue-700 text-white"><CheckCircle2 size={16} />{saving ? 'Saving...' : editingReport ? 'Update Report' : 'Save Daily Entries'}</button>}
+            </div>
+            {!archived && <button type="button" disabled={busy || !loaded || !savedMonthRows.length} onClick={archiveMonth} className="action-button bg-violet-700 text-white"><Archive size={16} />{archiving ? 'Saving month...' : 'Save Month to History'}</button>}
           </div>
-        )}
-        {activeTab === 'entry' && (
-          <form id="breakdown-report-form" onSubmit={handleSubmit} className="entry-panel rounded-2xl p-4 sm:p-6 print:shadow-none print:border-none">
-            <div className="flex flex-wrap justify-end gap-4 mb-5 pb-4 border-b border-emerald-100 print:hidden">
-              <div className="flex items-end justify-end gap-3 print:hidden">
-                <button
-                  type="button"
-                  onClick={() => exportToExcel(rows, reportDate)}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition shadow-sm cursor-pointer"
-                >
-                  <Download size={16} /> Export Draft
-                </button>
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition shadow-sm cursor-pointer"
-                >
-                  <Printer size={16} /> Print / PDF
-                </button>
-              </div>
+          <BreakdownTable rows={displayRows} month={month} highlightDate={highlightDate} emptyMessage={archived ? 'Is month ke saved breakdowns Monthly History mein milenge.' : undefined} {...tableActions} />
+          <p className="text-xs text-slate-600 mt-3 print:hidden">{rows.length && (!archived || editingReport) ? rows.length + ' draft rows · ' : ''}Daily save ke baad rows yahin rahengi. Month end par Save Month to History karein.</p>
+        </form>
+        {loaded && <TenDayBreakdownChart onSelectDate={openChartDate} disabled={busy} records={workspace.reports} onRefresh={refreshWorkspace} />}
+      </section> : <section className="history-panel rounded-2xl border border-violet-200 p-4 sm:p-6">
+        <h2 className="text-xl font-extrabold text-violet-900 mb-2">Monthly Breakdown History</h2>
+        <p className="text-sm text-violet-700 mb-5">Save Month to History kiye hue months yahan milenge.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6 print:hidden">
+          {historyGroups.map((group, index) => <button key={group.month} type="button" aria-pressed={historyMonth === group.month} onClick={() => selectHistory(group.month)} className={'date-card date-theme-' + index % 6 + (historyMonth === group.month ? ' date-card-selected' : '')}>
+            <CalendarDays size={20} /><div className="text-lg font-extrabold my-2">{monthLabel(group.month)}</div><span className="date-card-badge text-xs font-bold">{group.rows.length} breakdowns</span><p className="text-xs font-bold mt-3">Downtime: {group.hours.toFixed(2)} hrs</p>
+          </button>)}
+        </div>
+        {!historyGroups.length && !loading && <p className="p-8 text-center text-violet-700">Abhi koi month History mein save nahi hua hai. Daily entries Main Page par milengi.</p>}
+        {historyMonth && historyGroups.some(group => group.month === historyMonth) ? <>
+          <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+            <h3 className="font-extrabold text-violet-900">{monthLabel(historyMonth)}</h3>
+            <div className="flex flex-wrap gap-2 print:hidden">
+              <input type="search" aria-label="Search history by machine name" placeholder="Search machine..." value={filterMachine} onChange={event => setFilterMachine(event.target.value)} className="history-filter" />
+              <input type="date" aria-label="Filter history by date" value={filterDate} min={historyMonth + '-01'} max={monthEnd(historyMonth)} onChange={event => setFilterDate(event.target.value)} className="history-filter" />
+              <select aria-label="Filter history by shift" value={filterShift} onChange={event => setFilterShift(event.target.value)} className="history-filter"><option value="">All shifts</option><option value="D">D shift</option><option value="N">N shift</option></select>
+              {(filterDate || filterShift || filterMachine) && <button type="button" onClick={() => { setFilterDate(''); setFilterMachine(''); setFilterShift(''); }} className="action-button bg-white text-violet-800">Clear filters</button>}
+              <button type="button" disabled={!historyRows.length} onClick={() => exportRows(historyRows, historyMonth)} className="action-button bg-emerald-700 text-white"><Download size={16} /> Download Excel</button>
+              <button type="button" onClick={() => window.print()} className="action-button bg-indigo-100 text-indigo-900"><Printer size={16} /> Print / PDF</button>
             </div>
-
-            <div className="flex flex-wrap justify-between items-center gap-3 mb-4 print:hidden">
-              <p role="status" className={`text-xs font-semibold ${storageError ? 'text-rose-700' : 'text-emerald-700'}`}>{storageError ? 'Auto-save unavailable. Is tab ko close karne se pehle report save/export karein.' : draftStatus}</p>
-              {editingReport && <button type="button" onClick={cancelEdit} disabled={saving} className="text-xs font-bold text-rose-700 bg-rose-50 px-3 py-2 rounded-lg">Cancel Edit</button>}
-            </div>
-            <p className="hidden print:block mb-3 font-semibold">Report date: {reportDate}</p>
-            {editingReport && <p className="mb-4 text-sm font-semibold text-violet-800">Editing saved report • {reportDate}</p>}
-            <fieldset disabled={saving} className="min-w-0">
-            <div className="overflow-x-auto border border-slate-200 rounded-lg mb-6">
-              <table className="color-table entry-table w-full text-left text-xs border-collapse min-w-[1150px] print:min-w-full">
-                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase">
-                  <tr>
-                    <th className="p-2 border-r text-center w-12">SL. NO.</th>
-                    <th className="p-2 border-r w-36">Machine Name</th>
-                    <th className="p-2 border-r w-24">Shift</th>
-                    <th className="p-2 border-r w-48">Break Down Details</th>
-                    <th className="p-2 border-r w-44">Root Cause</th>
-                    <th className="p-2 border-r w-48">Corrective Action</th>
-                    <th className="p-2 border-r text-center w-24">Start Time</th>
-                    <th className="p-2 border-r text-center w-24">End Time</th>
-                    <th className="p-2 border-r text-center w-24">Down Time (Hrs)</th>
-                    <th className="p-2 border-r text-center w-24">Man Power</th>
-                    <th className="p-2 border-r w-36">Spares Used</th>
-                    <th className="p-2 text-center w-12 print:hidden">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {rows.map((row, idx) => (
-                    <tr key={row.id} className="hover:bg-slate-50">
-                      <td className="p-2 text-center font-bold text-slate-500 border-r">{idx + 1}</td>
-                      <td className="p-2 border-r">
-                        <input
-                          type="text"
-                          required
-                          aria-label={`Machine name row ${idx + 1}`}
-                          placeholder="Machine..."
-                          value={row.machineName}
-                          onChange={(e) => handleRowChange(idx, 'machineName', e.target.value)}
-                          className="w-full border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                      </td>
-                      <td className="p-2 border-r text-center">
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-label={`Night shift for row ${idx + 1}`}
-                          aria-checked={row.shift === 'N'}
-                          title="Click to switch between Day and Night shift"
-                          onClick={() => handleRowChange(idx, 'shift', row.shift === 'D' ? 'N' : 'D')}
-                          className={`shift-toggle print:hidden ${row.shift === 'D' ? 'shift-day' : 'shift-night'}`}
-                        >
-                          {row.shift}
-                        </button>
-                        <span className="hidden print:inline font-bold">{row.shift}</span>
-                      </td>
-                      <td className="p-2 border-r">
-                        <textarea
-                          rows={2}
-                          placeholder="Issue..."
-                          value={row.breakdownDetails}
-                          onChange={(e) => handleRowChange(idx, 'breakdownDetails', e.target.value)}
-                          className="w-full border rounded px-2 py-1 text-xs outline-none resize-none"
-                        />
-                      </td>
-                      <td className="p-2 border-r">
-                        <textarea
-                          rows={2}
-                          placeholder="Why..."
-                          value={row.rootCause}
-                          onChange={(e) => handleRowChange(idx, 'rootCause', e.target.value)}
-                          className="w-full border rounded px-2 py-1 text-xs outline-none resize-none"
-                        />
-                      </td>
-                      <td className="p-2 border-r">
-                        <textarea
-                          rows={2}
-                          placeholder="Action..."
-                          value={row.correctiveAction}
-                          onChange={(e) => handleRowChange(idx, 'correctiveAction', e.target.value)}
-                          className="w-full border rounded px-2 py-1 text-xs outline-none resize-none"
-                        />
-                      </td>
-                      <td className="p-2 border-r">
-                        <input
-                          type="time"
-                          value={row.startTime}
-                          onChange={(e) => handleRowChange(idx, 'startTime', e.target.value)}
-                          className="w-full border rounded px-1 py-1 text-xs outline-none"
-                        />
-                      </td>
-                      <td className="p-2 border-r">
-                        <input
-                          type="time"
-                          value={row.endTime}
-                          onChange={(e) => handleRowChange(idx, 'endTime', e.target.value)}
-                          className="w-full border rounded px-1 py-1 text-xs outline-none"
-                        />
-                      </td>
-                      <td className="p-2 border-r text-center font-bold bg-slate-50 text-red-600">{row.downTimeHours}</td>
-                      <td className="p-2 border-r">
-                        <input
-                          type="number"
-                          min="0"
-                          value={row.manpowerUsed}
-                          onChange={(e) => handleRowChange(idx, 'manpowerUsed', e.target.value)}
-                          className="w-full border rounded px-2 py-1 text-xs text-center outline-none"
-                        />
-                      </td>
-                      <td className="p-2 border-r">
-                        <input
-                          type="text"
-                          placeholder="Spares..."
-                          value={row.sparesUsed}
-                          onChange={(e) => handleRowChange(idx, 'sparesUsed', e.target.value)}
-                          className="w-full border rounded px-2 py-1 text-xs outline-none"
-                        />
-                      </td>
-                      <td className="p-2 text-center print:hidden">
-                        <button
-                          type="button"
-                          disabled={rows.length === 1}
-                          onClick={() => removeRow(idx)}
-                          className="text-red-500 hover:text-red-700 disabled:opacity-30 cursor-pointer"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-slate-100 font-bold text-slate-800 border-t-2 border-slate-300">
-                    <td colSpan={8} className="p-3 text-right pr-4 text-sm">Total</td>
-                    <td className="p-3 text-center border-x text-sm text-blue-700 bg-blue-50">{totalDownTime}</td>
-                    <td className="p-3 text-center border-r text-sm text-blue-700 bg-blue-50">{totalManPower}</td>
-                    <td colSpan={2}></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-4 print:hidden">
-              <button
-                type="button"
-                onClick={addRow}
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium px-4 py-2 rounded-lg text-sm transition border border-slate-300 cursor-pointer"
-              >
-                <Plus size={16} /> Add Breakdown Row
-              </button>
-
-              <button
-                type="submit"
-                disabled={saving}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-lg text-sm transition shadow-md disabled:opacity-50 cursor-pointer"
-              >
-                <CheckCircle2 size={18} /> {saving ? 'Saving...' : editingReport ? 'Update Report' : 'Submit Daily Report'}
-              </button>
-            </div>
-            </fieldset>
-            <TenDayBreakdownChart onSelectDate={openChartDate} disabled={saving} />
-          </form>
-        )}
-
-        {activeTab === 'history' && (
-          <section className="history-panel rounded-2xl border border-violet-200 p-4 sm:p-6 shadow-md print:shadow-none print:border-none">
-            <div className="flex flex-wrap items-center justify-between gap-4 mb-6 print:hidden">
-              <div>
-                <h2 className="text-xl font-bold text-violet-900 flex items-center gap-2"><CalendarDays size={22} /> Breakdown History</h2>
-                <p className="text-sm text-fuchsia-700 mt-1">Search machines, filter shifts, or choose a date to open reports</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <input type="search" aria-label="Search history by machine name" placeholder="Search machine..." value={filterMachine} onChange={e => setFilterMachine(e.target.value)} className="w-44 border border-sky-200 bg-white rounded-lg px-3 py-2 text-xs text-sky-900" />
-                <select aria-label="Filter history by section" value={filterSection} onChange={e => setFilterSection(e.target.value)} className="border border-emerald-200 bg-white rounded-lg px-3 py-2 text-xs text-emerald-900"><option value="">All sections</option>{sectionOptions.map(section => <option key={section} value={section}>{section}</option>)}</select>
-                <select aria-label="Filter history by shift" value={filterShift} onChange={e => setFilterShift(e.target.value)} className="border border-amber-200 bg-white rounded-lg px-3 py-2 text-xs text-amber-900"><option value="">All shifts</option><option value="D">D shift</option><option value="N">N shift</option></select>
-                {(filterDate || filterMachine || filterSection || filterShift) && (
-                  <button type="button" onClick={() => { setFilterDate(''); setFilterMachine(''); setFilterSection(''); setFilterShift(''); setOpenHistoryDate(null); }} className="text-xs font-semibold text-fuchsia-700 bg-fuchsia-100 px-3 py-2 rounded-lg">
-                    Clear Filter
-                  </button>
-                )}
-                <button type="button" onClick={() => fetchHistory()} aria-label="Refresh history" className="p-2 border border-violet-200 bg-white rounded-lg hover:bg-violet-100 text-violet-700">
-                  <RefreshCw size={16} />
-                </button>
-              </div>
-            </div>
-
-            {!loading && <>
-              <SummaryCards entries={insightEntries} label={insightLabel} />
-              <MachineAnalysis entries={insightEntries} label={insightLabel} />
-            </>}
-            {loading ? (
-              <div className="py-12 text-center text-violet-600 font-medium">Loading reports...</div>
-            ) : dateGroups.length === 0 ? (
-              <div className="py-12 text-center text-fuchsia-600">
-                <History size={48} className="mx-auto mb-3 opacity-50" />
-                <p>Koi matching report nahi mila. Filters clear karke dekhein.</p>
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6 print:hidden">
-                  {dateGroups.map((group, index) => (
-                    <button
-                      key={group.date}
-                      type="button"
-                      aria-expanded={openHistoryDate === group.date}
-                      aria-controls="history-date-reports"
-                      onClick={() => setOpenHistoryDate(openHistoryDate === group.date ? null : group.date)}
-                      className={`date-card date-theme-${index % 6} ${openHistoryDate === group.date ? 'date-card-selected' : ''}`}
-                    >
-                      <div className="flex justify-between items-center mb-3">
-                        <CalendarDays size={20} />
-                        <ChevronRight size={18} className={openHistoryDate === group.date ? 'rotate-90' : ''} />
-                      </div>
-                      <div className="text-lg font-extrabold mb-2">{group.date}</div>
-                      <div className="flex flex-wrap gap-2 text-xs font-semibold">
-                        <span className="date-card-badge">{group.reports.length} reports</span>
-                        <span className="date-card-badge">{group.entries} breakdowns</span>
-                      </div>
-                      <p className="text-xs font-bold mt-3">Downtime: {group.downtime.toFixed(2)} hrs</p>
-                    </button>
-                  ))}
-                </div>
-
-                <div id="history-date-reports">
-                  {selectedDateGroup ? (
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap justify-between items-center gap-3 rounded-xl bg-white/80 border border-violet-200 p-3">
-                        <h3 className="font-bold text-violet-900">Reports for {selectedDateGroup.date}</h3>
-                        <button type="button" onClick={() => { setFilterDate(''); setOpenHistoryDate(null); }} className="flex items-center gap-1 text-xs font-bold text-fuchsia-700 print:hidden"><ArrowLeft size={14} /> All dates</button>
-                      </div>
-                      {selectedDateGroup.reports.map((report, rIdx) => (
-                        <article key={report._id || rIdx} className="rounded-xl overflow-hidden border border-sky-200 shadow-sm bg-white page-break-inside-avoid">
-                          <div className="report-card-header px-4 py-3 flex flex-wrap justify-between items-center gap-3">
-                            <div className="flex flex-wrap gap-3 items-center">
-                              <span className="text-sm font-bold text-sky-900">Report {rIdx + 1}{(filterMachine || filterSection || filterShift) ? ' • matching rows' : ''}</span>
-                              <span className="text-xs font-semibold text-rose-800 bg-rose-100 px-2 py-1 rounded-lg">Downtime: {Number(report.totalDownTime).toFixed(2)} hrs</span>
-                              <span className="text-xs font-semibold text-amber-900 bg-amber-100 px-2 py-1 rounded-lg">Manpower: {report.totalManPower}</span>
-                            </div>
-                            <div className="flex items-center gap-2 print:hidden">
-                              <button type="button" onClick={() => handleEditReport(report._id)} className="flex items-center gap-1.5 text-xs bg-violet-600 hover:bg-violet-700 text-white font-semibold px-3 py-2 rounded-lg"><Pencil size={14} /> Edit Full Report</button>
-                              <button type="button" onClick={() => exportToExcel(report.entries, report.reportDate, report.shift)} className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-lg">
-                                <Download size={14} /> Download Excel
-                              </button>
-                              <button type="button" onClick={() => handleDeleteReport(report._id)} className="p-2 text-rose-700 bg-rose-100 hover:bg-rose-200 rounded-lg" title="Delete Record" aria-label={`Delete report ${rIdx + 1} for ${report.reportDate}`}><Trash2 size={16} /></button>
-                            </div>
-                          </div>
-                          <div className="overflow-x-auto p-3">
-                            <table className="color-table history-table w-full min-w-[950px] text-left text-xs border-collapse">
-                              <thead>
-                                <tr>
-                                  <th className="p-2">#</th>
-                                  <th className="p-2">Machine Name</th>
-                                  <th className="p-2">Section</th>
-                                  <th className="p-2">Shift</th>
-                                  <th className="p-2">Details</th>
-                                  <th className="p-2">Cause</th>
-                                  <th className="p-2">Corrective Action</th>
-                                  <th className="p-2 text-center">Time</th>
-                                  <th className="p-2 text-center">Downtime</th>
-                                  <th className="p-2 text-center">Manpower</th>
-                                  <th className="p-2">Spares</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {(report.entries || []).map((entry, eIdx) => (
-                                  <tr key={eIdx}>
-                                    <td className="p-2 font-bold">{eIdx + 1}</td>
-                                    <td className="p-2 font-semibold">{entry.machineName || '-'}</td>
-                                    <td className="p-2 font-semibold">{entry.section || '-'}</td>
-                                    <td className="p-2 font-bold text-center">{entry.shift || report.shift || '-'}</td>
-                                    <td className="p-2 max-w-[220px] whitespace-normal break-words">{entry.breakdownDetails || '-'}</td>
-                                    <td className="p-2 max-w-[180px] whitespace-normal break-words">{entry.rootCause || '-'}</td>
-                                    <td className="p-2 max-w-[180px] whitespace-normal break-words">{entry.correctiveAction || '-'}</td>
-                                    <td className="p-2 text-center">{entry.startTime || '-'} – {entry.endTime || '-'}</td>
-                                    <td className="p-2 text-center font-bold">{entry.downTimeHours} hrs</td>
-                                    <td className="p-2 text-center font-semibold">{entry.manpowerUsed}</td>
-                                    <td className="p-2">{entry.sparesUsed || '-'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-violet-300 bg-white/60 p-8 text-center text-violet-700 print:hidden">Upar kisi date block par click karke reports dekhein.</div>
-                  )}
-                </div>
-              </>
-            )}
-          </section>
-        )}
-      </main>
-    </div>
-  );
+          </div>
+          <SummaryCards entries={historyRows} label={monthLabel(historyMonth) + ' · saved breakdowns' + (filterDate || filterShift || filterMachine ? ' · filtered results' : '')} />
+          <MachineAnalysis entries={historyRows} label="Selected month and filters" />
+          <BreakdownTable rows={historyRows} month={historyMonth} emptyMessage="Koi matching breakdown nahi mila. Filters clear karke dekhein." {...tableActions} />
+        </> : historyGroups.length > 0 && <p className="p-8 text-center text-violet-700">Kisi month par click karke uski saari date-wise entries dekhein.</p>}
+        <button type="button" disabled={busy} onClick={() => { changeMonth(currentMonth()); setActiveTab('entry'); }} className="action-button bg-white text-teal-800 mt-5 print:hidden"><ArrowLeft size={16} /> Current Month · Main Page</button>
+      </section>}
+    </main>
+  </div>;
 }
+

@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
+import { reportPayload, validMonth } from './reportPayload.js';
 
 dotenv.config({ path: fileURLToPath(new URL("./.env", import.meta.url)) });
 
@@ -77,6 +78,13 @@ const breakdownReportSchema = new mongoose.Schema(
 
 const BreakdownReport =
   mongoose.models.BreakdownReport || mongoose.model("BreakdownReport", breakdownReportSchema);
+
+// One durable marker closes a calendar month for every device. Reports stay intact.
+const monthArchiveSchema = new mongoose.Schema({
+  _id: { type: String, required: true },
+  archivedAt: { type: Date, required: true }
+});
+const MonthArchive = mongoose.models.MonthArchive || mongoose.model('MonthArchive', monthArchiveSchema);
 
 // =================== AUTH ROUTES ===================
 // 1. Register / Update Face
@@ -161,28 +169,15 @@ app.post("/api/auth/login-face", async (req, res) => {
 });
 
 // =================== REPORT ROUTES ===================
-const reportPayload = (body) => {
-  const { reportDate, shift, entries } = body;
-  const date = new Date(`${reportDate}T00:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate || '') || Number.isNaN(date.getTime()) ||
-      date.toISOString().slice(0, 10) !== reportDate || !shift ||
-      !Array.isArray(entries) || !entries.length ||
-      entries.some(entry => !entry || typeof entry.machineName !== 'string' || !entry.machineName.trim() ||
-        !Number.isFinite(Number(entry.downTimeHours ?? 0)) || Number(entry.downTimeHours ?? 0) < 0 ||
-        !Number.isFinite(Number(entry.manpowerUsed ?? 0)) || Number(entry.manpowerUsed ?? 0) < 0)) return null;
-  return {
-    reportDate, shift, entries,
-    totalDownTime: Number(entries.reduce((sum, entry) => sum + Number(entry.downTimeHours || 0), 0).toFixed(2)),
-    totalManPower: entries.reduce((sum, entry) => sum + Number(entry.manpowerUsed || 0), 0)
-  };
-};
-
 // 3. Save Breakdown Report
 app.post("/api/reports", async (req, res) => {
   try {
     const payload = reportPayload(req.body);
     if (!payload) {
-      return res.status(400).json({ error: "Valid date, shift, machine name aur non-negative downtime/manpower zaroori hain." });
+      return res.status(400).json({ error: "Har row mein valid date, machine name aur non-negative downtime/manpower chahiye. Ek save mein sab dates same month ki honi chahiye." });
+    }
+    if (await MonthArchive.exists({ _id: payload.reportDate.slice(0, 7) })) {
+      return res.status(409).json({ error: 'Yeh month History mein save ho chuka hai. Main page refresh karein; saved report ko History se edit kar sakte hain.' });
     }
     const report = new BreakdownReport(payload);
     const saved = await report.save();
@@ -201,6 +196,11 @@ app.put("/api/reports/:id", async (req, res) => {
     }
     const payload = reportPayload(req.body);
     if (!payload) return res.status(400).json({ error: "Valid date, shift, machine name aur non-negative downtime/manpower zaroori hain." });
+    const original = await BreakdownReport.findById(req.params.id).lean();
+    if (!original) return res.status(404).json({ error: 'Report nahi mili. Aapka edit draft safe hai.' });
+    if (original.reportDate.slice(0, 7) !== payload.reportDate.slice(0, 7)) {
+      return res.status(400).json({ error: 'Report ki dates usi month mein rakhein. Dusre month ke liye new entry banayein.' });
+    }
     const filter = { _id: req.params.id };
     if (req.body.expectedUpdatedAt) {
       const timestamp = new Date(req.body.expectedUpdatedAt);
@@ -225,12 +225,38 @@ app.put("/api/reports/:id", async (req, res) => {
 app.get("/api/reports", async (req, res) => {
   try {
     const { date } = req.query;
-    const filter = date ? { reportDate: date } : {};
+    const filter = date ? { $or: [{ 'entries.entryDate': date }, { reportDate: date, entries: { $elemMatch: { entryDate: null } } }] } : {};
     const reports = await BreakdownReport.find(filter).sort({ reportDate: -1, createdAt: -1 }).lean();
+    if (req.query.view === 'monthly') {
+      const archives = await MonthArchive.find({}).lean();
+      return res.json({ reports, archivedMonths: archives.map(archive => archive._id) });
+    }
     res.json(reports);
   } catch (error) {
     console.error("Fetch Reports Error:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Closing a month never copies or deletes reports. Repeating the request is safe.
+app.post('/api/report-months/:month/archive', async (req, res) => {
+  try {
+    const { month } = req.params;
+    if (!validMonth(month)) return res.status(400).json({ error: 'Valid month (YYYY-MM) required.' });
+    const exists = await BreakdownReport.exists({ reportDate: { $regex: `^${month}-` } });
+    if (!exists) return res.status(400).json({ error: 'Is month mein koi saved breakdown nahi hai. Pehle daily entries save karein.' });
+    let archive;
+    try {
+      archive = await MonthArchive.findOneAndUpdate({ _id: month },
+        { $setOnInsert: { archivedAt: new Date() } }, { upsert: true, new: true, runValidators: true });
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      archive = await MonthArchive.findById(month);
+    }
+    res.json({ month, archivedAt: archive.archivedAt });
+  } catch (error) {
+    console.error('Archive Month Error:', error);
+    res.status(500).json({ error: 'Month History mein save nahi hua. Dobara try karein.' });
   }
 });
 
@@ -250,3 +276,4 @@ app.use("/api", (req, res) => {
 });
 
 export default app;
+
